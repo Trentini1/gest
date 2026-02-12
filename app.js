@@ -15,7 +15,7 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
-const COLLECTION_NAME = "servicos_retifica_v6"; // V6: Limpa dados antigos e reseta ordem
+const COLLECTION_NAME = "servicos_retifica_v6"; 
 
 // --- ROTEAMENTO E SERVIÇOS ---
 const PART_ROUTING = {
@@ -27,7 +27,6 @@ const PART_ROUTING = {
     "Peças Diversas": "bielas"
 };
 
-// Baseado no seu PDF (CamScanner)
 const SERVICE_CATALOG = {
     "Cabeçote": [ "Plaina", "Sede Válvulas", "Ret. Válvulas", "Trocar Guias", "Trocar Sedes", "Teste Trinca", "Costura", "Camisa Bico", "Regular", "Montagem", "Jato" ],
     "Bloco": [ "Banho Químico", "Teste Trinca", "Plaina Face", "Ret. Cilindro", "Brunir", "Encamisar", "Ret. Mancal", "Bucha Comando", "Troca Selos", "Projeção" ],
@@ -37,14 +36,14 @@ const SERVICE_CATALOG = {
     "Peças Diversas": [ "Solda Alumínio", "Solda Ferro", "Torno", "Roscas" ]
 };
 
-// --- ESTADO GLOBAL ---
+// --- ESTADO ---
 let workOrders = [];
+let currentMonth = new Date();
 let activeStageMobile = null;
 let editingId = null;
 let currentView = 'board'; 
 let resizeTimeout;
 
-// ORDEM V6
 const DEFAULT_STAGES = [
     { id: 'lavacao', label: 'Lavação', color: 'text-blue-400', isGrouped: true },
     { id: 'orcamento', label: 'Inspeção', color: 'text-red-400', isGrouped: true },
@@ -57,15 +56,18 @@ const DEFAULT_STAGES = [
 ];
 
 let currentStages = JSON.parse(localStorage.getItem('retifica_stages_order_v7')) || DEFAULT_STAGES;
-// Reset forçado se a versão for antiga
 if(currentStages.length < DEFAULT_STAGES.length) currentStages = DEFAULT_STAGES; 
 if(!activeStageMobile && currentStages.length > 0) activeStageMobile = currentStages[0].id;
 
-// --- INICIALIZAÇÃO ---
+// --- INICIALIZAÇÃO SEGURA ---
 function init() {
+    console.log("Iniciando App...");
+    
+    // Configura as funções globais e UI antes de qualquer coisa
     setupGlobalFunctions();
     setupUI();
     
+    // Inicia conexão com Banco
     const q = query(collection(db, COLLECTION_NAME), orderBy("timestamp", "desc"));
     onSnapshot(q, (snapshot) => {
         workOrders = snapshot.docs.map(doc => ({
@@ -76,13 +78,239 @@ function init() {
         renderApp();
     }, (err) => {
         console.error("Erro Firebase:", err);
-        showToast("Erro de conexão", "error");
+        showToast("Erro de conexão com o banco de dados", "error");
     });
 
     window.addEventListener('resize', () => {
         clearTimeout(resizeTimeout);
         resizeTimeout = setTimeout(renderApp, 150);
     });
+}
+
+// --- SETUP UI ---
+function setupUI() {
+    const fab = document.getElementById('fab-new-os');
+    if(fab) fab.onclick = window.openModal;
+    
+    const form = document.getElementById('new-os-form');
+    if(form) form.onsubmit = handleOSSubmit;
+    
+    // View Switcher
+    const setView = (view) => {
+        currentView = view;
+        const board = document.getElementById('board-view');
+        const dash = document.getElementById('dashboard-view');
+        const cal = document.getElementById('calendar-view');
+        const mobTabs = document.getElementById('mobile-tabs');
+        
+        // Safety checks
+        if(!board || !dash || !cal) return;
+
+        const btns = { 
+            board: document.getElementById('view-board'), 
+            dash: document.getElementById('view-dashboard'), 
+            cal: document.getElementById('view-calendar') 
+        };
+
+        // Reset Styles
+        Object.values(btns).forEach(b => {
+            if(b) {
+                b.classList.replace('text-blue-400', 'text-slate-400');
+                b.classList.replace('bg-slate-800', 'hover:bg-slate-700');
+            }
+        });
+
+        // Hide All
+        board.classList.add('hidden');
+        dash.classList.add('translate-x-full');
+        cal.classList.add('translate-x-full');
+        if(mobTabs) mobTabs.classList.add('hidden');
+
+        // Show Active
+        if (view === 'board') {
+            board.classList.remove('hidden');
+            if(mobTabs) mobTabs.classList.remove('hidden');
+            if(btns.board) btns.board.classList.add('text-blue-400', 'bg-slate-800');
+            renderBoard();
+            renderMobileTabs();
+        } else if (view === 'dashboard') {
+            dash.classList.remove('translate-x-full');
+            if(btns.dash) btns.dash.classList.add('text-blue-400', 'bg-slate-800');
+            renderDashboard();
+        } else {
+            cal.classList.remove('translate-x-full');
+            if(btns.cal) btns.cal.classList.add('text-blue-400', 'bg-slate-800');
+            renderCalendar();
+        }
+    };
+
+    const btnBoard = document.getElementById('view-board');
+    if(btnBoard) btnBoard.onclick = () => setView('board');
+    
+    const btnDash = document.getElementById('view-dashboard');
+    if(btnDash) btnDash.onclick = () => setView('dashboard');
+    
+    const btnCal = document.getElementById('view-calendar');
+    if(btnCal) btnCal.onclick = () => setView('calendar');
+    
+    const btnPrev = document.getElementById('cal-prev');
+    if(btnPrev) btnPrev.onclick = () => { currentMonth.setMonth(currentMonth.getMonth()-1); renderCalendar(); };
+    
+    const btnNext = document.getElementById('cal-next');
+    if(btnNext) btnNext.onclick = () => { currentMonth.setMonth(currentMonth.getMonth()+1); renderCalendar(); };
+}
+
+// --- FUNÇÕES GLOBAIS ---
+function setupGlobalFunctions() {
+    window.openSettings = () => {
+        const modal = document.getElementById('modal-settings');
+        const list = document.getElementById('settings-list');
+        if(!modal || !list) return;
+        list.innerHTML = '';
+        currentStages.forEach((stage, idx) => {
+            const item = document.createElement('div');
+            item.className = 'flex items-center justify-between bg-slate-700 p-3 rounded mb-2 border border-slate-600';
+            item.innerHTML = `
+                <span class="text-sm font-bold text-white">${stage.label}</span>
+                <div class="flex gap-1">
+                    <button onclick="moveOrder(${idx}, -1)" class="p-1 hover:bg-slate-600 rounded opacity-70 hover:opacity-100"><i data-lucide="arrow-up" class="w-4 h-4"></i></button>
+                    <button onclick="moveOrder(${idx}, 1)" class="p-1 hover:bg-slate-600 rounded opacity-70 hover:opacity-100"><i data-lucide="arrow-down" class="w-4 h-4"></i></button>
+                </div>
+            `;
+            list.appendChild(item);
+        });
+        modal.classList.remove('hidden');
+        if(window.lucide) window.lucide.createIcons();
+    };
+
+    window.moveOrder = (idx, dir) => {
+        if ((idx === 0 && dir === -1) || (idx === currentStages.length-1 && dir === 1)) return;
+        const temp = currentStages[idx];
+        currentStages[idx] = currentStages[idx + dir];
+        currentStages[idx + dir] = temp;
+        window.openSettings(); 
+    };
+
+    window.closeSettings = () => {
+        localStorage.setItem('retifica_stages_order_v7', JSON.stringify(currentStages));
+        document.getElementById('modal-settings').classList.add('hidden');
+        renderApp();
+        showToast("Ordem salva!");
+    };
+
+    window.resetSettings = () => {
+        localStorage.removeItem('retifica_stages_order_v7');
+        currentStages = DEFAULT_STAGES;
+        window.openSettings();
+    };
+
+    window.openModal = () => {
+        editingId = null;
+        resetForm();
+        const modal = document.getElementById('modal');
+        if(modal) modal.classList.remove('hidden');
+    };
+
+    window.closeModal = () => {
+        const modal = document.getElementById('modal');
+        if(modal) modal.classList.add('hidden');
+        resetForm();
+    };
+
+    window.approveOS = async (id) => {
+        if(!confirm("Aprovar orçamento? Isso distribuirá as peças.")) return;
+        try {
+            await updateDoc(doc(db, COLLECTION_NAME, id), { approved: true });
+            showToast("✅ Aprovado!");
+        } catch(e) { console.error(e); }
+    };
+
+    window.editOS = (id) => {
+        const os = workOrders.find(o => o.id === id);
+        if(!os) return;
+
+        editingId = id;
+        document.getElementById('input-os-num').value = os.osNumber;
+        document.getElementById('input-motor').value = os.motor;
+        document.getElementById('input-cliente').value = os.cliente;
+        document.getElementById('input-prazo').value = os.deadline || '';
+        document.getElementById('input-prioridade').checked = os.priority;
+
+        const partsContainer = document.getElementById('parts-selection');
+        partsContainer.innerHTML = '';
+        renderServiceChecklist(os, partsContainer);
+
+        const btn = document.getElementById('btn-submit');
+        if(btn) btn.innerHTML = `Salvar Alterações`;
+        
+        let delBtn = document.getElementById('btn-delete-os');
+        const form = document.getElementById('new-os-form');
+        
+        if(!delBtn && form) {
+            delBtn = document.createElement('button');
+            delBtn.id = 'btn-delete-os';
+            delBtn.className = 'w-full mt-6 bg-red-600/10 hover:bg-red-600 text-red-400 hover:text-white font-bold py-3 rounded-xl border border-red-900/50 transition-colors flex items-center justify-center gap-2 text-sm';
+            delBtn.innerHTML = `<i data-lucide="trash-2" class="w-4 h-4"></i> Excluir O.S.`;
+            delBtn.type = 'button';
+            delBtn.onclick = () => deleteOS(id);
+            form.appendChild(delBtn);
+        } else if (delBtn) {
+            delBtn.onclick = () => deleteOS(id);
+            delBtn.classList.remove('hidden');
+        }
+
+        const modal = document.getElementById('modal');
+        if(modal) modal.classList.remove('hidden');
+        if(window.lucide) window.lucide.createIcons();
+    };
+
+    window.resolvePendency = async (osId, partName) => {
+        if(!confirm(`Liberar ${partName}?`)) return;
+        try {
+            const os = workOrders.find(o => o.id === osId);
+            const newPendencies = { ...os.pendencies };
+            delete newPendencies[partName];
+            await updateDoc(doc(db, COLLECTION_NAME, osId), { pendencies: newPendencies });
+            showToast("Pendência resolvida!");
+        } catch(e) { console.error(e); }
+    };
+    
+    // Toggle Layout Helper
+    window.toggleContent = (wrapper, isChecked) => {
+        const content = wrapper.querySelector('.content-area');
+        const title = wrapper.querySelector('span');
+        if (isChecked) {
+            content.classList.remove('hidden');
+            wrapper.classList.remove('opacity-70', 'border-slate-800', 'bg-slate-900/40');
+            wrapper.classList.add('border-blue-500/40', 'bg-blue-950/10');
+            title.classList.replace('text-slate-400', 'text-blue-100');
+        } else {
+            content.classList.add('hidden');
+            wrapper.classList.add('opacity-70', 'border-slate-800', 'bg-slate-900/40');
+            wrapper.classList.remove('border-blue-500/40', 'bg-blue-950/10');
+            title.classList.replace('text-blue-100', 'text-slate-400');
+        }
+    };
+    
+    // Advance Group Helper
+    window.advanceGroup = async (osId, currentStageId) => {
+        try {
+            const os = workOrders.find(o => o.id === osId);
+            if(!os) return;
+            const idx = currentStages.findIndex(s => s.id === currentStageId);
+            const nextStageDefault = currentStages[idx + 1].id;
+            const newComponents = { ...os.components };
+            
+            Object.keys(newComponents).forEach(key => {
+                if(newComponents[key] === currentStageId) {
+                    if (currentStageId === 'orcamento') newComponents[key] = PART_ROUTING[key] || 'montagem';
+                    else newComponents[key] = nextStageDefault;
+                }
+            });
+            await updateDoc(doc(db, COLLECTION_NAME, osId), { components: newComponents });
+            showToast("Peças Distribuídas!");
+        } catch(e) { console.error(e); }
+    };
 }
 
 // --- RENDERIZAÇÃO CENTRAL ---
@@ -103,11 +331,9 @@ function renderDashboard() {
     if (!container) return;
 
     const totalOS = workOrders.length;
-    // Conta quantas peças estão esperando aprovação no orçamento
     const waitingApproval = workOrders.filter(o => o.components && Object.values(o.components).includes('orcamento') && !o.approved).length;
     const delayed = workOrders.filter(o => getDeadlineStatus(o.deadlineDate) === 'late').length;
     
-    // Contagem por setor (GPS)
     const sectorCounts = {};
     currentStages.forEach(s => sectorCounts[s.id] = 0);
     workOrders.forEach(o => {
@@ -166,105 +392,7 @@ function renderDashboard() {
     `;
 }
 
-// --- FUNÇÃO CORE: CHECKLIST INTELIGENTE (USADA NO NOVO E NO EDITAR) ---
-function renderServiceChecklist(os = {}, partsContainer) {
-    Object.keys(SERVICE_CATALOG).forEach(part => {
-        // Se for novo (os vazio), isChecked é false. Se for edit, verifica.
-        const isChecked = os.components && os.components[part];
-        const savedServices = (os.services && os.services[part]) 
-            ? (Array.isArray(os.services[part]) ? os.services[part] : [os.services[part]]) 
-            : [];
-        
-        const pendencyReason = os.pendencies && os.pendencies[part] ? os.pendencies[part] : '';
-
-        // Container da Peça
-        const wrapper = document.createElement('div');
-        wrapper.className = `rounded-xl border transition-all duration-200 overflow-hidden ${isChecked ? 'border-blue-500/40 bg-blue-950/10' : 'border-slate-800 bg-slate-900/40 opacity-70 hover:opacity-100'}`;
-
-        // Header (Nome da Peça + Toggle)
-        const header = document.createElement('div');
-        header.className = "flex items-center gap-3 p-3 cursor-pointer select-none";
-        // Toggle ao clicar na barra inteira
-        header.onclick = (e) => {
-            if (e.target.type !== 'checkbox') {
-                const cb = header.querySelector('input[type="checkbox"]');
-                cb.checked = !cb.checked;
-                toggleContent(wrapper, cb.checked);
-            }
-        };
-
-        header.innerHTML = `
-            <input type="checkbox" name="parts" value="${part}" class="w-5 h-5 accent-blue-500 rounded cursor-pointer" ${isChecked ? 'checked' : ''} onchange="toggleContent(this.closest('div').parentElement, this.checked)">
-            <span class="text-sm font-bold ${isChecked ? 'text-blue-100' : 'text-slate-400'} flex-1">${part}</span>
-            ${pendencyReason ? '<i data-lucide="alert-triangle" class="w-4 h-4 text-red-500 animate-pulse"></i>' : ''}
-        `;
-
-        // Conteúdo (Serviços)
-        const content = document.createElement('div');
-        content.className = `content-area p-3 pt-0 border-t border-blue-500/20 ${isChecked ? '' : 'hidden'}`;
-        
-        // Grid de Serviços (2 colunas)
-        const servicesGrid = document.createElement('div');
-        servicesGrid.className = "grid grid-cols-2 gap-2 mt-2";
-        
-        SERVICE_CATALOG[part].forEach(service => {
-            const serviceChecked = savedServices.includes(service);
-            const label = document.createElement('label');
-            label.className = "flex items-start gap-2 p-1.5 rounded hover:bg-slate-800/50 cursor-pointer border border-transparent hover:border-slate-700 transition-colors";
-            label.innerHTML = `
-                <input type="checkbox" name="service-${part}" value="${service}" class="mt-0.5 w-3.5 h-3.5 rounded border-slate-600 bg-slate-800 accent-emerald-500" ${serviceChecked ? 'checked' : ''}>
-                <span class="text-[11px] text-slate-300 leading-tight">${service}</span>
-            `;
-            servicesGrid.appendChild(label);
-        });
-        content.appendChild(servicesGrid);
-
-        // Input Extra
-        const customService = savedServices.find(s => !SERVICE_CATALOG[part].includes(s)) || "";
-        content.innerHTML += `
-            <input type="text" name="extra-${part}" value="${customService}" 
-            class="w-full mt-3 bg-slate-950 border border-slate-800 rounded px-2 py-1.5 text-xs text-white focus:border-blue-500 outline-none placeholder-slate-600" 
-            placeholder="Outro serviço...">
-        `;
-
-        // Bloqueio
-        const pendencyDiv = document.createElement('div');
-        pendencyDiv.className = "mt-3 pt-2 border-t border-dashed border-slate-700/50";
-        pendencyDiv.innerHTML = `
-            <label class="flex items-center gap-2 text-xs font-bold text-red-400/80 hover:text-red-400 cursor-pointer mb-2">
-                <input type="checkbox" class="accent-red-500 w-3.5 h-3.5" onchange="const input = this.parentElement.nextElementSibling; input.classList.toggle('hidden'); if(!this.checked) input.value = '';" ${pendencyReason ? 'checked' : ''}>
-                <span>Bloquear (Peça Faltando)</span>
-            </label>
-            <input type="text" name="pendency-${part}" value="${pendencyReason}" 
-                class="${pendencyReason ? '' : 'hidden'} w-full bg-red-900/10 border border-red-500/30 rounded p-2 text-xs text-red-200 focus:border-red-500 outline-none placeholder-red-500/30"
-                placeholder="Motivo...">
-        `;
-        content.appendChild(pendencyDiv);
-
-        wrapper.appendChild(header);
-        wrapper.appendChild(content);
-        partsContainer.appendChild(wrapper);
-    });
-}
-
-// Helper Global
-window.toggleContent = (wrapper, isChecked) => {
-    const content = wrapper.querySelector('.content-area');
-    const title = wrapper.querySelector('span');
-    if (isChecked) {
-        content.classList.remove('hidden');
-        wrapper.classList.remove('opacity-70', 'border-slate-800', 'bg-slate-900/40');
-        wrapper.classList.add('border-blue-500/40', 'bg-blue-950/10');
-        title.classList.replace('text-slate-400', 'text-blue-100');
-    } else {
-        content.classList.add('hidden');
-        wrapper.classList.add('opacity-70', 'border-slate-800', 'bg-slate-900/40');
-        wrapper.classList.remove('border-blue-500/40', 'bg-blue-950/10');
-        title.classList.replace('text-blue-100', 'text-slate-400');
-    }
-};
-
-// --- RENDER BOARD ---
+// --- FUNÇÕES DE RENDERIZAÇÃO DE LISTA ---
 function renderBoard() {
     const container = document.getElementById('board-view');
     if (!container) return;
@@ -413,128 +541,116 @@ function createPartCard(os, partName, currentStageId) {
     return el;
 }
 
-// --- FUNÇÕES EXPOSTAS AO HTML ---
-function setupGlobalFunctions() {
-    window.openSettings = () => {
-        const modal = document.getElementById('modal-settings');
-        const list = document.getElementById('settings-list');
-        if(!modal || !list) return;
-        list.innerHTML = '';
-        currentStages.forEach((stage, idx) => {
-            const item = document.createElement('div');
-            item.className = 'flex items-center justify-between bg-slate-700 p-3 rounded mb-2 border border-slate-600';
-            item.innerHTML = `
-                <span class="text-sm font-bold text-white">${stage.label}</span>
-                <div class="flex gap-1">
-                    <button onclick="moveOrder(${idx}, -1)" class="p-1 hover:bg-slate-600 rounded opacity-70 hover:opacity-100"><i data-lucide="arrow-up" class="w-4 h-4"></i></button>
-                    <button onclick="moveOrder(${idx}, 1)" class="p-1 hover:bg-slate-600 rounded opacity-70 hover:opacity-100"><i data-lucide="arrow-down" class="w-4 h-4"></i></button>
-                </div>
-            `;
-            list.appendChild(item);
+function renderMobileTabs() {
+    const nav = document.getElementById('mobile-tabs');
+    if (!nav) return;
+    nav.innerHTML = '';
+    currentStages.forEach(stage => {
+        let count = 0;
+        workOrders.forEach(os => {
+            if(stage.isGrouped) {
+                const hasPartHere = os.components && Object.values(os.components).includes(stage.id);
+                if(hasPartHere) count++;
+            } else {
+                if(os.components) {
+                    Object.values(os.components).forEach(s => { if(s === stage.id) count++; });
+                }
+            }
         });
-        modal.classList.remove('hidden');
-        if(window.lucide) window.lucide.createIcons();
-    };
 
-    window.moveOrder = (idx, dir) => {
-        if ((idx === 0 && dir === -1) || (idx === currentStages.length-1 && dir === 1)) return;
-        const temp = currentStages[idx];
-        currentStages[idx] = currentStages[idx + dir];
-        currentStages[idx + dir] = temp;
-        window.openSettings(); 
-    };
+        const isActive = activeStageMobile === stage.id;
+        const btn = document.createElement('button');
+        btn.className = `whitespace-nowrap px-4 py-1.5 rounded-full text-sm font-bold border transition-all flex-shrink-0 ${isActive ? 'bg-blue-600 text-white border-blue-600 shadow-lg' : 'bg-slate-800 text-slate-400 border-slate-700'}`;
+        btn.innerHTML = `${stage.label} <span class="ml-1 opacity-70 text-xs">${count}</span>`;
+        btn.onclick = () => {
+            activeStageMobile = stage.id;
+            renderApp();
+            btn.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+        };
+        nav.appendChild(btn);
+    });
+}
 
-    window.closeSettings = () => {
-        localStorage.setItem('retifica_stages_order_v7', JSON.stringify(currentStages));
-        document.getElementById('modal-settings').classList.add('hidden');
-        renderApp();
-        showToast("Ordem salva!");
-    };
-
-    window.resetSettings = () => {
-        localStorage.removeItem('retifica_stages_order_v7');
-        currentStages = DEFAULT_STAGES;
-        window.openSettings();
-    };
-
-    window.openModal = () => {
-        editingId = null;
-        resetForm();
-        document.getElementById('modal').classList.remove('hidden');
-    };
-
-    window.closeModal = () => {
-        document.getElementById('modal').classList.add('hidden');
-        resetForm();
-    };
-
-    window.approveOS = async (id) => {
-        if(!confirm("Aprovar orçamento? Isso distribuirá as peças.")) return;
-        try {
-            await updateDoc(doc(db, COLLECTION_NAME, id), { approved: true });
-            showToast("✅ Aprovado!");
-        } catch(e) { console.error(e); }
-    };
-
-    window.editOS = (id) => {
-        const os = workOrders.find(o => o.id === id);
-        if(!os) return;
-
-        editingId = id;
-        document.getElementById('input-os-num').value = os.osNumber;
-        document.getElementById('input-motor').value = os.motor;
-        document.getElementById('input-cliente').value = os.cliente;
-        document.getElementById('input-prazo').value = os.deadline || '';
-        document.getElementById('input-prioridade').checked = os.priority;
-
-        const partsContainer = document.getElementById('parts-selection');
-        partsContainer.innerHTML = '';
-        renderServiceChecklist(os, partsContainer); // REUSA A MESMA LÓGICA DE CRIAÇÃO
-
-        const btn = document.getElementById('btn-submit');
-        btn.innerHTML = `Salvar Alterações`;
+function renderServiceChecklist(os = {}, partsContainer) {
+    Object.keys(SERVICE_CATALOG).forEach(part => {
+        const isChecked = os.components && os.components[part];
+        const savedServices = (os.services && os.services[part]) 
+            ? (Array.isArray(os.services[part]) ? os.services[part] : [os.services[part]]) 
+            : [];
         
-        // Remove botão antigo e cria novo para evitar duplicação de event listener
-        const oldDel = document.getElementById('btn-delete-os');
-        if(oldDel) oldDel.remove();
+        const pendencyReason = os.pendencies && os.pendencies[part] ? os.pendencies[part] : '';
 
-        const delBtn = document.createElement('button');
-        delBtn.id = 'btn-delete-os';
-        delBtn.className = 'w-full mt-3 bg-red-600/10 hover:bg-red-600 text-red-400 hover:text-white font-bold py-3 rounded-xl border border-red-900/50 transition-colors flex items-center justify-center gap-2 text-sm';
-        delBtn.innerHTML = `<i data-lucide="trash-2" class="w-4 h-4"></i> Excluir O.S.`;
-        delBtn.type = 'button';
-        delBtn.onclick = () => deleteOS(id);
+        const wrapper = document.createElement('div');
+        wrapper.className = `rounded-xl border transition-all duration-200 overflow-hidden ${isChecked ? 'border-blue-500/40 bg-blue-950/10' : 'border-slate-800 bg-slate-900/40 opacity-70 hover:opacity-100'}`;
+
+        const header = document.createElement('div');
+        header.className = "flex items-center gap-3 p-3 cursor-pointer select-none";
+        header.onclick = (e) => {
+            if (e.target.type !== 'checkbox') {
+                const cb = header.querySelector('input[type="checkbox"]');
+                cb.checked = !cb.checked;
+                toggleContent(wrapper, cb.checked);
+            }
+        };
+
+        header.innerHTML = `
+            <input type="checkbox" name="parts" value="${part}" class="w-5 h-5 accent-blue-500 rounded cursor-pointer" ${isChecked ? 'checked' : ''} onchange="toggleContent(this.closest('div').parentElement, this.checked)">
+            <span class="text-sm font-bold ${isChecked ? 'text-blue-100' : 'text-slate-400'} flex-1">${part}</span>
+            ${pendencyReason ? '<i data-lucide="alert-triangle" class="w-4 h-4 text-red-500 animate-pulse"></i>' : ''}
+        `;
+
+        const content = document.createElement('div');
+        content.className = `content-area p-3 pt-0 border-t border-blue-500/20 ${isChecked ? '' : 'hidden'}`;
         
-        // Insere o botão de excluir após o form, mas dentro do modal footer se possível, ou no final do form
-        // Aqui insere no final do container de peças
-        partsContainer.parentElement.appendChild(delBtn);
+        const servicesGrid = document.createElement('div');
+        servicesGrid.className = "grid grid-cols-2 gap-2 mt-2";
+        
+        SERVICE_CATALOG[part].forEach(service => {
+            const serviceChecked = savedServices.includes(service);
+            const label = document.createElement('label');
+            label.className = "flex items-start gap-2 p-1.5 rounded hover:bg-slate-800/50 cursor-pointer border border-transparent hover:border-slate-700 transition-colors";
+            label.innerHTML = `
+                <input type="checkbox" name="service-${part}" value="${service}" class="mt-0.5 w-3.5 h-3.5 rounded border-slate-600 bg-slate-800 accent-emerald-500" ${serviceChecked ? 'checked' : ''}>
+                <span class="text-[11px] text-slate-300 leading-tight">${service}</span>
+            `;
+            servicesGrid.appendChild(label);
+        });
+        content.appendChild(servicesGrid);
 
-        document.getElementById('modal').classList.remove('hidden');
-        if(window.lucide) window.lucide.createIcons();
-    };
+        const customService = savedServices.find(s => !SERVICE_CATALOG[part].includes(s)) || "";
+        content.innerHTML += `
+            <input type="text" name="extra-${part}" value="${customService}" 
+            class="w-full mt-3 bg-slate-950 border border-slate-800 rounded px-2 py-1.5 text-xs text-white focus:border-blue-500 outline-none placeholder-slate-600" 
+            placeholder="Outro serviço...">
+        `;
 
-    window.resolvePendency = async (osId, partName) => {
-        if(!confirm(`Liberar ${partName}?`)) return;
-        try {
-            const os = workOrders.find(o => o.id === osId);
-            const newPendencies = { ...os.pendencies };
-            delete newPendencies[partName];
-            await updateDoc(doc(db, COLLECTION_NAME, osId), { pendencies: newPendencies });
-            showToast("Pendência resolvida!");
-        } catch(e) { console.error(e); }
-    };
+        const pendencyDiv = document.createElement('div');
+        pendencyDiv.className = "mt-3 pt-2 border-t border-dashed border-slate-700/50";
+        pendencyDiv.innerHTML = `
+            <label class="flex items-center gap-2 text-xs font-bold text-red-400/80 hover:text-red-400 cursor-pointer mb-2">
+                <input type="checkbox" class="accent-red-500 w-3.5 h-3.5" onchange="const input = this.parentElement.nextElementSibling; input.classList.toggle('hidden'); if(!this.checked) input.value = '';" ${pendencyReason ? 'checked' : ''}>
+                <span>Bloquear (Peça Faltando)</span>
+            </label>
+            <input type="text" name="pendency-${part}" value="${pendencyReason}" 
+                class="${pendencyReason ? '' : 'hidden'} w-full bg-red-900/10 border border-red-500/30 rounded p-2 text-xs text-red-200 focus:border-red-500 outline-none placeholder-red-500/30"
+                placeholder="Motivo...">
+        `;
+        content.appendChild(pendencyDiv);
+
+        wrapper.appendChild(header);
+        wrapper.appendChild(content);
+        partsContainer.appendChild(wrapper);
+    });
 }
 
 function resetForm() {
     document.getElementById('new-os-form').reset();
     const partsContainer = document.getElementById('parts-selection');
     partsContainer.innerHTML = ''; 
-    
-    // --- AQUI ESTAVA O ERRO: ANTES EU SÓ CRIAVA INPUTS VAZIOS. AGORA CHAMO A LÓGICA COMPLETA ---
     renderServiceChecklist({}, partsContainer);
 
     const btn = document.getElementById('btn-submit');
-    btn.innerHTML = `Lançar O.S.`;
+    if(btn) btn.innerHTML = `Lançar O.S.`;
     
     const delBtn = document.getElementById('btn-delete-os');
     if(delBtn) delBtn.remove();
@@ -605,26 +721,6 @@ async function handleOSSubmit(e) {
     }
 }
 
-// --- UTILS ---
-window.advanceGroup = async (osId, currentStageId) => {
-    try {
-        const os = workOrders.find(o => o.id === osId);
-        if(!os) return;
-        const idx = currentStages.findIndex(s => s.id === currentStageId);
-        const nextStageDefault = currentStages[idx + 1].id;
-        const newComponents = { ...os.components };
-        
-        Object.keys(newComponents).forEach(key => {
-            if(newComponents[key] === currentStageId) {
-                if (currentStageId === 'orcamento') newComponents[key] = PART_ROUTING[key] || 'montagem';
-                else newComponents[key] = nextStageDefault;
-            }
-        });
-        await updateDoc(doc(db, COLLECTION_NAME, osId), { components: newComponents });
-        showToast("Peças Distribuídas!");
-    } catch(e) { console.error(e); }
-};
-
 async function deleteOS(id) {
     if(!confirm("Apagar?")) return;
     try { await deleteDoc(doc(db, COLLECTION_NAME, id)); window.closeModal(); showToast("Apagado", "error"); } catch(e) {}
@@ -693,4 +789,5 @@ function renderCalendar() {
     }
 }
 
+// Inicia
 init();
