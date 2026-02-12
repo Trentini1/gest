@@ -15,18 +15,77 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
-const COLLECTION_NAME = "servicos_retifica_v3"; // Nova versão para limpar dados antigos incompatíveis
+const COLLECTION_NAME = "servicos_retifica_v4"; // Nova versão por causa da estrutura de dados nova
+
+// --- CATÁLOGO DE SERVIÇOS (BASEADO NO SEU PDF) ---
+const SERVICE_CATALOG = {
+    "Cabeçote": [
+        "Plaina de cabeçote",
+        "Retificar sede válvulas",
+        "Retificar válvulas",
+        "Substituir guias",
+        "Substituir sedes",
+        "Teste de trinca (Hidrostático)",
+        "Costura de cabeçote",
+        "Troca camisa de bico",
+        "Regular válvulas",
+        "Montagem completa",
+        "Jato de areia/microesfera"
+    ],
+    "Bloco": [
+        "Banho Químico (Limpeza)",
+        "Teste de trinca",
+        "Plaina de face",
+        "Retificar cilindros",
+        "Brunir cilindros",
+        "Encamisar cilindros",
+        "Retificar ferro de mancal",
+        "Embuchar aloj. comando",
+        "Troca de selos/bujões",
+        "Projeção de camisa"
+    ],
+    "Virabrequim": [
+        "Retificar colos (Biela/Mancal)",
+        "Polimento",
+        "Alinhamento",
+        "Teste de trinca (Magnaflux)",
+        "Nitretar"
+    ],
+    "Bielas": [
+        "Retificar buchas",
+        "Retificar alojamento (Ferros)",
+        "Alinhar biela",
+        "Trocar buchas"
+    ],
+    "Comando": [
+        "Polimento",
+        "Retificar colos",
+        "Recuperar cames"
+    ],
+    "Montagem": [
+        "Montagem Parcial (Bloco)",
+        "Montagem Completa",
+        "Metrologia Completa",
+        "Pintura"
+    ],
+    "Peças Diversas": [
+        "Solda em alumínio",
+        "Solda em ferro fundido",
+        "Serviço de torno",
+        "Recuperar roscas"
+    ]
+};
 
 // --- ESTADO ---
 let workOrders = [];
 let currentMonth = new Date();
 let activeStageMobile = null;
 let editingId = null;
+let resizeTimeout; 
 
-// NOVOS ESTÁGIOS: Fluxo Funil
 const DEFAULT_STAGES = [
-    { id: 'lavacao', label: 'Lavação', color: 'text-blue-400', isGrouped: true },
-    { id: 'orcamento', label: 'Inspeção/Orçamento', color: 'text-red-400', isGrouped: true },
+    { id: 'lavacao', label: 'Lavação / Entrada', color: 'text-blue-400', isGrouped: true },
+    { id: 'orcamento', label: 'Inspeção & Orçamento', color: 'text-red-400', isGrouped: true },
     { id: 'metrologia', label: 'Metrologia', color: 'text-yellow-400', isGrouped: false },
     { id: 'cilindro', label: 'Cilindro/Bloco', color: 'text-orange-400', isGrouped: false },
     { id: 'cabecote', label: 'Cabeçote', color: 'text-purple-400', isGrouped: false },
@@ -54,12 +113,14 @@ function init() {
         showToast("Erro de conexão", "error");
     });
 
-    window.addEventListener('resize', renderApp);
+    window.addEventListener('resize', () => {
+        clearTimeout(resizeTimeout);
+        resizeTimeout = setTimeout(renderApp, 150);
+    });
 }
 
 // --- FUNÇÕES GLOBAIS ---
 function setupGlobalFunctions() {
-    // Configurações
     window.openSettings = () => {
         const modal = document.getElementById('modal-settings');
         const list = document.getElementById('settings-list');
@@ -102,7 +163,6 @@ function setupGlobalFunctions() {
         window.openSettings();
     };
 
-    // Modal Nova/Edit OS
     window.openModal = () => {
         editingId = null;
         resetForm();
@@ -112,6 +172,14 @@ function setupGlobalFunctions() {
     window.closeModal = () => {
         document.getElementById('modal').classList.add('hidden');
         resetForm();
+    };
+
+    window.approveOS = async (id) => {
+        if(!confirm("Aprovar orçamento? Isso liberará as peças para produção.")) return;
+        try {
+            await updateDoc(doc(db, COLLECTION_NAME, id), { approved: true });
+            showToast("✅ Orçamento Aprovado!");
+        } catch(e) { console.error(e); }
     };
 
     window.editOS = (id) => {
@@ -125,48 +193,65 @@ function setupGlobalFunctions() {
         document.getElementById('input-prazo').value = os.deadline || '';
         document.getElementById('input-prioridade').checked = os.priority;
 
-        // Limpa lista de peças
         const partsContainer = document.getElementById('parts-selection');
         partsContainer.innerHTML = '';
 
-        // Gera inputs de serviços para cada peça existente ou padrão
-        const allParts = ['Bloco', 'Cabeçote', 'Virabrequim', 'Bielas', 'Comando', 'Peças Diversas'];
-        
-        allParts.forEach(part => {
+        // --- GERAÇÃO DO CHECKLIST ---
+        Object.keys(SERVICE_CATALOG).forEach(part => {
             const isChecked = os.components && os.components[part];
-            const serviceNote = (os.services && os.services[part]) || '';
+            // Verifica se tem serviços salvos (array) ou string antiga
+            const savedServices = (os.services && os.services[part]) 
+                ? (Array.isArray(os.services[part]) ? os.services[part] : [os.services[part]]) 
+                : [];
             
-            const div = document.createElement('div');
-            div.className = `p-3 rounded-lg border ${isChecked ? 'border-blue-500/50 bg-blue-900/10' : 'border-slate-700 bg-slate-900'} transition-all`;
-            div.innerHTML = `
-                <label class="flex items-center gap-3 cursor-pointer mb-2">
-                    <input type="checkbox" name="parts" value="${part}" class="w-4 h-4 accent-blue-500" ${isChecked ? 'checked' : ''}>
-                    <span class="text-sm font-bold ${isChecked ? 'text-blue-300' : 'text-slate-400'}">${part}</span>
-                </label>
-                <input type="text" name="service-${part}" value="${serviceNote}" 
-                    class="w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs text-white focus:border-blue-500 outline-none placeholder-slate-600"
-                    placeholder="O que fazer? (Ex: Retífica 0.50)">
+            // Cria o Accordion (Detalhes)
+            const details = document.createElement('details');
+            details.className = `group rounded-lg border ${isChecked ? 'border-blue-500/50 bg-blue-900/5' : 'border-slate-700 bg-slate-900'} transition-all open:bg-slate-800 open:border-blue-500 mb-2`;
+            if (isChecked) details.open = true; // Abre se já tiver peça selecionada
+
+            // Cabeçalho do Accordion (Nome da Peça)
+            const summary = document.createElement('summary');
+            summary.className = "flex items-center gap-3 p-3 cursor-pointer list-none select-none";
+            summary.innerHTML = `
+                <input type="checkbox" name="parts" value="${part}" class="w-5 h-5 accent-blue-500" ${isChecked ? 'checked' : ''} onclick="event.stopPropagation()">
+                <span class="text-sm font-bold ${isChecked ? 'text-blue-300' : 'text-slate-400'} flex-1">${part}</span>
+                <i data-lucide="chevron-down" class="w-4 h-4 text-slate-500 transition-transform group-open:rotate-180"></i>
             `;
-            partsContainer.appendChild(div);
+            
+            // Corpo do Accordion (Lista de Serviços)
+            const content = document.createElement('div');
+            content.className = "p-3 pt-0 border-t border-slate-700/50 space-y-2";
+            
+            // Gera Checkboxes dos Serviços
+            SERVICE_CATALOG[part].forEach(service => {
+                const serviceChecked = savedServices.includes(service);
+                const label = document.createElement('label');
+                label.className = "flex items-center gap-2 hover:bg-slate-700/50 p-1 rounded cursor-pointer";
+                label.innerHTML = `
+                    <input type="checkbox" name="service-${part}" value="${service}" class="w-4 h-4 rounded border-slate-600 bg-slate-800 accent-emerald-500" ${serviceChecked ? 'checked' : ''}>
+                    <span class="text-xs text-slate-300">${service}</span>
+                `;
+                content.appendChild(label);
+            });
+
+            // Input Extra para "Outros"
+            const customService = savedServices.find(s => !SERVICE_CATALOG[part].includes(s)) || "";
+            const extraInput = document.createElement('input');
+            extraInput.type = "text";
+            extraInput.name = `extra-${part}`;
+            extraInput.value = customService;
+            extraInput.className = "w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs text-white focus:border-blue-500 outline-none mt-2";
+            extraInput.placeholder = "Outro serviço (digite aqui)...";
+            content.appendChild(extraInput);
+
+            details.appendChild(summary);
+            details.appendChild(content);
+            partsContainer.appendChild(details);
         });
 
-        // Toggle Aprovação
-        const statusContainer = document.getElementById('status-container');
-        if (statusContainer) {
-            statusContainer.innerHTML = `
-                <label class="flex items-center gap-3 p-3 rounded-lg border ${os.approved ? 'border-emerald-500 bg-emerald-900/20' : 'border-red-500 bg-red-900/20'} cursor-pointer transition-all">
-                    <input type="checkbox" id="input-approved" class="w-5 h-5 accent-emerald-500" ${os.approved ? 'checked' : ''}>
-                    <span class="font-bold ${os.approved ? 'text-emerald-400' : 'text-red-400'}">
-                        ${os.approved ? 'ORÇAMENTO APROVADO - LIBERADO' : 'AGUARDANDO APROVAÇÃO DO CLIENTE'}
-                    </span>
-                </label>
-            `;
-        }
-
         const btn = document.getElementById('btn-submit');
-        btn.innerHTML = `Salvar Alterações`;
+        btn.innerHTML = `Salvar Checklist`;
         
-        // Botão Excluir
         let delBtn = document.getElementById('btn-delete-os');
         if(!delBtn) {
             delBtn = document.createElement('button');
@@ -190,29 +275,30 @@ function resetForm() {
     const form = document.getElementById('new-os-form');
     form.reset();
     
-    // Reset Peças
+    // Recria a estrutura vazia do checklist
     const partsContainer = document.getElementById('parts-selection');
-    partsContainer.innerHTML = ''; // Recria padrão no edit, ou vazio no create
-    // Recria padrão simples para New OS
-    const defaultParts = ['Bloco', 'Cabeçote', 'Virabrequim', 'Bielas', 'Comando', 'Peças Diversas'];
-    defaultParts.forEach(part => {
-        const div = document.createElement('div');
-        div.className = 'p-3 rounded-lg border border-slate-700 bg-slate-900';
-        div.innerHTML = `
-            <label class="flex items-center gap-3 cursor-pointer mb-2">
-                <input type="checkbox" name="parts" value="${part}" class="w-4 h-4 accent-blue-500" ${['Bloco','Cabeçote'].includes(part) ? 'checked' : ''}>
-                <span class="text-sm font-medium text-slate-300">${part}</span>
-            </label>
-            <input type="text" name="service-${part}" class="hidden w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs" placeholder="Serviço...">
+    partsContainer.innerHTML = ''; 
+    
+    Object.keys(SERVICE_CATALOG).forEach(part => {
+        // Código duplicado simplificado para o reset (mostra fechado)
+        const details = document.createElement('details');
+        details.className = `group rounded-lg border border-slate-700 bg-slate-900 mb-2`;
+        
+        const summary = document.createElement('summary');
+        summary.className = "flex items-center gap-3 p-3 cursor-pointer list-none";
+        summary.innerHTML = `
+            <input type="checkbox" name="parts" value="${part}" class="w-5 h-5 accent-blue-500" onclick="event.stopPropagation()">
+            <span class="text-sm font-medium text-slate-300 flex-1">${part}</span>
+            <i data-lucide="chevron-down" class="w-4 h-4 text-slate-500"></i>
         `;
-        partsContainer.appendChild(div);
+        
+        details.appendChild(summary);
+        // Não renderiza o conteúdo interno no reset para economizar DOM, será gerado ao clicar se precisasse (mas aqui deixamos simples)
+        partsContainer.appendChild(details);
     });
 
-    const statusContainer = document.getElementById('status-container');
-    if(statusContainer) statusContainer.innerHTML = ''; // Novo não tem status, nasce pendente
-
     const btn = document.getElementById('btn-submit');
-    btn.innerHTML = `Lançar O.S. na Entrada`;
+    btn.innerHTML = `Criar Nova O.S.`;
     
     const delBtn = document.getElementById('btn-delete-os');
     if(delBtn) delBtn.classList.add('hidden');
@@ -230,18 +316,14 @@ function renderApp() {
 function renderMobileTabs() {
     const nav = document.getElementById('mobile-tabs');
     if (!nav) return;
-    
     nav.innerHTML = '';
     currentStages.forEach(stage => {
-        // Contagem inteligente
         let count = 0;
         workOrders.forEach(os => {
             if(stage.isGrouped) {
-                // Se o estágio é agrupado (Lavação/Orçamento), conta 1 por O.S. se tiver QUALQUER peça lá
                 const hasPartHere = os.components && Object.values(os.components).includes(stage.id);
                 if(hasPartHere) count++;
             } else {
-                // Se é produção, conta as peças individuais
                 if(os.components) {
                     Object.values(os.components).forEach(s => { if(s === stage.id) count++; });
                 }
@@ -272,11 +354,11 @@ function renderBoard() {
         if (isMobile && stage.id !== activeStageMobile) return;
 
         const column = document.createElement('div');
-        column.className = `flex-shrink-0 flex flex-col h-full ${isMobile ? 'w-full' : 'w-[350px] bg-slate-900/50 rounded-xl border border-slate-800'}`;
+        column.className = `flex-shrink-0 flex flex-col h-full ${isMobile ? 'w-full' : 'w-[360px] bg-slate-900 rounded-xl border border-slate-800'}`;
         
         if (!isMobile) {
             column.innerHTML = `
-                <div class="p-3 border-b border-slate-800 flex justify-between items-center sticky top-0 bg-slate-900/90 backdrop-blur z-10 rounded-t-xl">
+                <div class="p-3 border-b border-slate-800 flex justify-between items-center sticky top-0 bg-slate-900 z-10 rounded-t-xl">
                     <div class="flex items-center gap-2">
                         <div class="w-2 h-2 rounded-full stage-dot ${stage.color} bg-current"></div>
                         <h3 class="font-bold text-slate-300 text-sm uppercase">${stage.label}</h3>
@@ -291,17 +373,13 @@ function renderBoard() {
         const list = column.querySelector('.list-container');
         let hasItems = false;
 
-        // LÓGICA DE RENDERIZAÇÃO MISTA (AGRUPADO VS PEÇAS)
         if (stage.isGrouped) {
-            // Estágios de Gestão (Lavação/Orçamento): Mostra 1 Card por O.S.
             const relevantOS = workOrders.filter(os => os.components && Object.values(os.components).includes(stage.id));
-            
             relevantOS.forEach(os => {
                 list.appendChild(createGroupedCard(os, stage.id));
                 hasItems = true;
             });
         } else {
-            // Estágios de Produção (Metrologia, etc): Mostra Peças Individuais
             workOrders.forEach(os => {
                 if (!os.components) return;
                 Object.entries(os.components).forEach(([partName, partStage]) => {
@@ -329,54 +407,86 @@ function renderBoard() {
 // --- CARD: AGRUPADO (Lavação/Orçamento) ---
 function createGroupedCard(os, stageId) {
     const el = document.createElement('div');
-    const deadlineStatus = getDeadlineStatus(os.deadlineDate);
     
     let borderClass = 'border-slate-700';
     if(stageId === 'orcamento') {
-        borderClass = os.approved ? 'border-emerald-500 shadow-[0_0_15px_-3px_rgba(16,185,129,0.2)]' : 'border-red-500 shadow-[0_0_15px_-3px_rgba(239,68,68,0.2)]';
+        borderClass = os.approved ? 'border-emerald-500' : 'border-red-500';
     }
 
-    // Lista de peças que estão NESTE estágio
     const partsHere = Object.entries(os.components)
         .filter(([_, st]) => st === stageId)
         .map(([name]) => name);
 
-    el.className = `relative p-4 rounded-lg border-l-4 ${borderClass} bg-slate-800 transition-all active:scale-[0.98] group`;
+    el.className = `relative p-4 rounded-lg border-l-4 ${borderClass} bg-slate-800 transition-all active:scale-[0.99] group shadow-sm`;
     
+    // RENDERIZAÇÃO DOS SERVIÇOS (TAGS)
+    const servicesListHTML = partsHere.map(p => {
+        const servs = os.services && os.services[p];
+        if (!servs || servs.length === 0) return '';
+        const servText = Array.isArray(servs) ? servs.join(', ') : servs;
+        
+        return `
+            <div class="mt-1 border-t border-slate-700/50 pt-1">
+                <span class="text-xs font-bold text-slate-300 block">${p}:</span>
+                <span class="text-[10px] text-slate-500 leading-tight block">${servText}</span>
+            </div>
+        `;
+    }).join('');
+
+    // BOTÕES DE AÇÃO - CORRIGIDO
+    let actionButtons = '';
+    
+    // Se está no Orçamento e NÃO está aprovado -> Botão Aprovar
+    if (stageId === 'orcamento' && !os.approved) {
+        actionButtons = `
+            <div class="flex gap-2 mt-4">
+                <button onclick="editOS('${os.id}')" class="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-300 py-2.5 rounded font-bold text-xs">
+                    <i data-lucide="list-checks" class="w-3 h-3 inline mr-1"></i> SERVIÇOS
+                </button>
+                <button onclick="approveOS('${os.id}')" class="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-2.5 rounded font-bold text-xs shadow-lg shadow-emerald-900/20">
+                    <i data-lucide="thumbs-up" class="w-3 h-3 inline mr-1"></i> APROVAR
+                </button>
+            </div>
+        `;
+    } 
+    // Se está no Orçamento e JÁ está aprovado -> Botão Distribuir
+    else if (stageId === 'orcamento' && os.approved) {
+         actionButtons = `
+            <div class="mt-3 p-2 bg-emerald-900/20 border border-emerald-900/50 rounded text-center mb-2">
+                <span class="text-[10px] text-emerald-400 font-bold tracking-wide">PRODUÇÃO AUTORIZADA</span>
+            </div>
+            <button onclick="advanceGroup('${os.id}', '${stageId}')" class="w-full bg-blue-600 hover:bg-blue-500 text-white py-2.5 rounded font-bold text-xs shadow-lg shadow-blue-900/20 flex justify-center items-center gap-2">
+                Enviar para Setores <i data-lucide="arrow-right-circle" class="w-4 h-4"></i>
+            </button>
+        `;
+    } 
+    // Se está na Lavação
+    else {
+        actionButtons = `
+            <button onclick="advanceGroup('${os.id}', '${stageId}')" class="w-full mt-3 bg-blue-600 hover:bg-blue-500 text-white py-2 rounded font-bold text-xs shadow-lg shadow-blue-900/20 flex justify-center items-center gap-2">
+                Finalizar Lavação <i data-lucide="arrow-right-circle" class="w-4 h-4"></i>
+            </button>
+        `;
+    }
+
     el.innerHTML = `
-        <div class="flex justify-between items-start mb-3">
+        <div class="flex justify-between items-start mb-2">
             <span class="font-mono text-xs font-bold text-slate-400 bg-slate-950 px-2 py-1 rounded cursor-pointer hover:text-white" onclick="editOS('${os.id}')">
-                <i data-lucide="edit-2" class="w-3 h-3 inline mr-1"></i>#${os.osNumber}
+                #${os.osNumber}
             </span>
             ${stageId === 'orcamento' ? 
-                (os.approved ? '<span class="text-[10px] font-bold bg-emerald-900/30 text-emerald-400 px-2 py-1 rounded border border-emerald-800">APROVADO</span>' 
-                             : '<span class="text-[10px] font-bold bg-red-900/30 text-red-400 px-2 py-1 rounded border border-red-800 animate-pulse">AGUARDANDO</span>') 
+                (os.approved ? '<i data-lucide="check-circle" class="w-4 h-4 text-emerald-400"></i>' 
+                             : '<i data-lucide="clock" class="w-4 h-4 text-red-400 animate-pulse"></i>') 
                 : ''}
         </div>
         
         <h4 class="text-white font-bold text-lg leading-tight mb-1">${os.motor}</h4>
-        <p class="text-slate-400 text-xs uppercase font-semibold mb-3 tracking-wide">${os.cliente}</p>
+        <p class="text-slate-400 text-xs uppercase font-semibold mb-2 tracking-wide">${os.cliente}</p>
 
-        <!-- Lista de Peças no Card -->
-        <div class="space-y-1 mb-4">
-            ${partsHere.map(p => `
-                <div class="flex justify-between items-center text-xs text-slate-300 bg-slate-900/50 px-2 py-1 rounded">
-                    <span>${p}</span>
-                    <span class="text-slate-500 italic truncate max-w-[100px]">${(os.services && os.services[p]) || ''}</span>
-                </div>
-            `).join('')}
-        </div>
+        <!-- Lista de Serviços Compacta -->
+        ${servicesListHTML}
 
-        <div class="flex gap-2">
-            ${stageId === 'orcamento' && !os.approved ? 
-                `<button onclick="editOS('${os.id}')" class="w-full bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white border border-red-900 py-2 rounded font-bold text-xs transition-colors">
-                    <i data-lucide="file-signature" class="w-3 h-3 inline mr-1"></i> ANALISAR / APROVAR
-                </button>` :
-                `<button onclick="advanceGroup('${os.id}', '${stageId}')" class="w-full bg-blue-600 hover:bg-blue-500 text-white py-2 rounded font-bold text-xs shadow-lg shadow-blue-900/20 transition-colors flex justify-center items-center gap-2">
-                    Avançar Todos <i data-lucide="arrow-right-circle" class="w-4 h-4"></i>
-                </button>`
-            }
-        </div>
+        ${actionButtons}
     `;
     return el;
 }
@@ -386,13 +496,14 @@ function createPartCard(os, partName, currentStageId) {
     const el = document.createElement('div');
     const deadlineStatus = getDeadlineStatus(os.deadlineDate);
     
-    // Serviço Específico
-    const serviceNote = (os.services && os.services[partName]) || 'Serviço Padrão';
+    // Pega serviços desta peça
+    const servs = os.services && os.services[partName];
+    const serviceNote = (Array.isArray(servs) ? servs.join(', ') : servs) || 'Serviço Padrão';
     
     const stageIdx = currentStages.findIndex(s => s.id === currentStageId);
     const hasNext = stageIdx < currentStages.length - 1;
 
-    el.className = `part-card relative p-3 rounded-lg border-l-4 border-slate-700 bg-slate-800 transition-all active:scale-[0.98] group`;
+    el.className = `part-card relative p-3 rounded-lg border-l-4 border-slate-700 bg-slate-800 transition-all active:scale-[0.99] group`;
     
     el.innerHTML = `
         <div class="flex justify-between items-start mb-2">
@@ -402,7 +513,7 @@ function createPartCard(os, partName, currentStageId) {
         
         <div class="mb-2">
             <h4 class="text-white font-bold text-sm leading-tight truncate">${os.motor}</h4>
-            <div class="text-blue-400 text-[10px] font-mono mt-1 bg-blue-900/10 p-1 rounded border border-blue-900/30 truncate">
+            <div class="text-blue-300 text-[10px] font-medium mt-1 bg-blue-900/10 p-1.5 rounded border border-blue-900/30 leading-snug">
                 ${serviceNote}
             </div>
         </div>
@@ -430,7 +541,6 @@ function createPartCard(os, partName, currentStageId) {
 }
 
 // --- AÇÕES DB ---
-
 async function handleOSSubmit(e) {
     e.preventDefault();
     const btn = document.getElementById('btn-submit');
@@ -448,40 +558,49 @@ async function handleOSSubmit(e) {
             timestamp: serverTimestamp()
         };
 
-        // Captura serviços e peças
-        const partsInputs = document.querySelectorAll('input[name="parts"]:checked');
         const componentsMap = {};
         const servicesMap = {};
         
-        // Determina estágio inicial/atual
+        // Recupera dados antigos se estiver editando
         let currentComponents = {};
         if (editingId) {
             const oldOS = workOrders.find(o => o.id === editingId);
             currentComponents = oldOS.components || {};
         }
 
-        partsInputs.forEach(cb => {
-            const part = cb.value;
-            // Se já existe, mantém o estágio. Se é novo, vai para Lavação (Estágio 0)
-            componentsMap[part] = currentComponents[part] || currentStages[0].id;
+        // Itera sobre as peças do Accordion
+        Object.keys(SERVICE_CATALOG).forEach(part => {
+            // Verifica se a peça principal (checkbox do summary) está marcada
+            const partCheckbox = document.querySelector(`input[name="parts"][value="${part}"]`);
             
-            // Captura o serviço escrito
-            const serviceInput = document.querySelector(`input[name="service-${part}"]`);
-            if(serviceInput && serviceInput.value) servicesMap[part] = serviceInput.value;
+            if (partCheckbox && partCheckbox.checked) {
+                // Mantém o estágio atual ou define como Lavação (Estágio 0)
+                componentsMap[part] = currentComponents[part] || currentStages[0].id;
+                
+                // Coleta serviços marcados (checkboxes internos)
+                const selectedServices = [];
+                const serviceChecks = document.querySelectorAll(`input[name="service-${part}"]:checked`);
+                serviceChecks.forEach(sc => selectedServices.push(sc.value));
+                
+                // Coleta "Outros"
+                const extraInput = document.querySelector(`input[name="extra-${part}"]`);
+                if(extraInput && extraInput.value.trim()) {
+                    selectedServices.push(extraInput.value.trim());
+                }
+
+                if(selectedServices.length > 0) {
+                    servicesMap[part] = selectedServices;
+                }
+            }
         });
 
-        // Captura Aprovação (só se estiver editando e o campo existir)
-        const approvedInput = document.getElementById('input-approved');
-        const isApproved = approvedInput ? approvedInput.checked : false;
-
-        if (Object.keys(componentsMap).length === 0) throw new Error("Selecione peças!");
+        if (Object.keys(componentsMap).length === 0) throw new Error("Selecione pelo menos uma peça!");
 
         if (editingId) {
             await updateDoc(doc(db, COLLECTION_NAME, editingId), {
                 ...osData,
                 components: componentsMap,
-                services: servicesMap,
-                approved: isApproved
+                services: servicesMap
             });
             showToast("Atualizado!");
         } else {
@@ -489,9 +608,9 @@ async function handleOSSubmit(e) {
                 ...osData,
                 components: componentsMap,
                 services: servicesMap,
-                approved: false // Nasce não aprovado
+                approved: false
             });
-            showToast("O.S. Criada na Lavação!");
+            showToast("O.S. Criada!");
         }
         window.closeModal();
     } catch (err) {
@@ -504,17 +623,14 @@ async function handleOSSubmit(e) {
     }
 }
 
-// Avança TODOS os componentes de um estágio para o próximo (Para Lavação -> Orçamento)
 window.advanceGroup = async (osId, currentStageId) => {
     try {
         const os = workOrders.find(o => o.id === osId);
         if(!os) return;
 
-        // Descobre o próximo estágio
         const idx = currentStages.findIndex(s => s.id === currentStageId);
         const nextStage = currentStages[idx + 1].id;
 
-        // Move APENAS as peças que estão no estágio atual
         const newComponents = { ...os.components };
         Object.keys(newComponents).forEach(key => {
             if(newComponents[key] === currentStageId) {
@@ -554,7 +670,6 @@ async function finishPart(os, partName) {
     } catch(e) { console.error(e); }
 }
 
-// --- UTILS ---
 function getDeadlineStatus(date) {
     if(!date) return 'ok';
     return (date - new Date() < 0) ? 'late' : 'ok';
@@ -566,7 +681,6 @@ function showToast(msg, type='success') {
     document.getElementById('toast-msg').innerText = msg;
     const icon = t.querySelector('i');
     
-    // Safety check para ícone
     if(icon) {
         if(type==='error') {
             t.classList.replace('border-slate-600', 'border-red-500');
@@ -584,7 +698,6 @@ function showToast(msg, type='success') {
     if(window.lucide) window.lucide.createIcons();
 }
 
-// UI SETUP
 function setupUI() {
     document.getElementById('fab-new-os').onclick = window.openModal;
     document.getElementById('new-os-form').onsubmit = handleOSSubmit;
@@ -617,5 +730,4 @@ function renderCalendar() {
     }
 }
 
-// Boot
 init();
