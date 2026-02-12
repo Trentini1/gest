@@ -80,12 +80,24 @@ function renderBoard() {
         return;
     }
     
+    // MELHORIA MOBILE: Força classes de Snap Scroll no container via JS
+    container.classList.add('snap-x', 'snap-mandatory', 'scroll-pl-6');
     container.innerHTML = '';
 
     currentStages.forEach(stage => {
         const column = document.createElement('div');
-        // Ajustei as classes para ficarem mais responsivas
-        column.className = `min-w-[300px] w-[320px] flex flex-col h-full bg-slate-800/40 rounded-xl border border-slate-700/50 backdrop-blur-md transition-colors hover:border-slate-600`;
+        
+        // --- RESPONSIVIDADE BRUTAL ---
+        // Mobile: min-w-[85vw] (Ocupa 85% da tela, deixando ver um pedaço da próxima coluna)
+        // Desktop (md): min-w-[320px] (Volta ao fixo em telas grandes)
+        // snap-center: No mobile, a coluna sempre vai centralizar na tela ao soltar o dedo
+        column.className = `
+            min-w-[85vw] w-[85vw] md:min-w-[320px] md:w-[320px] 
+            snap-center snap-always
+            flex flex-col h-full 
+            bg-slate-800/40 rounded-xl border border-slate-700/50 
+            backdrop-blur-md transition-colors hover:border-slate-600
+        `;
         
         const ordersInStage = workOrders.filter(o => o.stage === stage.id);
         
@@ -93,7 +105,7 @@ function renderBoard() {
             <div class="p-4 border-b border-slate-700/50 flex justify-between items-center bg-slate-900/50 rounded-t-xl sticky top-0 z-10">
                 <div class="flex items-center gap-3">
                     <div class="w-3 h-3 shadow shadow-${stage.color.replace('border-', '')}/50 rounded-full ${getStageColor(stage.id)}"></div>
-                    <h3 class="font-bold text-slate-100 uppercase tracking-wider text-xs">${stage.label}</h3>
+                    <h3 class="font-bold text-slate-100 uppercase tracking-wider text-sm">${stage.label}</h3>
                 </div>
                 <span class="bg-slate-700/50 text-xs font-bold px-2 py-0.5 rounded text-slate-300 border border-slate-600">${ordersInStage.length}</span>
             </div>
@@ -117,7 +129,7 @@ function createCard(os) {
         ${os.priority ? 'urgent-pulse border-red-600 bg-red-900/10' : 'border-slate-600 hover:border-blue-500'} 
         ${os.pending ? 'border-yellow-500 opacity-90 bg-yellow-900/5' : ''}`;
     
-    // Status visual do prazo (Badge mais bonito)
+    // Status visual do prazo (Badge mais bonito e legível no mobile)
     let badgeHtml = '';
     if (status === 'late') badgeHtml = `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-red-500/20 text-red-400 border border-red-500/30 flex items-center gap-1"><i data-lucide="alert-circle" class="w-3 h-3"></i> ATRASADO</span>`;
     else if (status === 'warning') badgeHtml = `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-orange-500/20 text-orange-400 border border-orange-500/30">HOJE</span>`;
@@ -135,7 +147,7 @@ function createCard(os) {
         <h4 class="font-bold text-slate-100 text-lg leading-tight mb-1 tracking-tight">${os.motor}</h4>
         <p class="text-xs text-slate-400 mb-3 font-medium uppercase tracking-wide">${os.cliente}</p>
         
-        <div class="flex items-center gap-2 text-[11px] text-slate-400 mb-3 bg-slate-900/30 p-1.5 rounded w-full border border-slate-700/30">
+        <div class="flex items-center gap-2 text-[11px] text-slate-400 mb-3 bg-slate-900/30 p-2 rounded w-full border border-slate-700/30">
             <i data-lucide="calendar-clock" class="w-3 h-3 text-blue-400"></i> 
             ${os.deadlineDate ? os.deadlineDate.toLocaleString('pt-BR', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' }) : 'Sem prazo definido'}
         </div>
@@ -147,17 +159,17 @@ function createCard(os) {
             </div>
         ` : ''}
 
-        <div class="flex justify-between items-center pt-3 border-t border-slate-700/50 mt-auto">
-            <button class="btn-lock p-2 rounded-full hover:bg-slate-700 text-slate-500 hover:text-yellow-400 transition-colors" title="${os.pending ? 'Destravar' : 'Travar com Pendência'}">
-                <i data-lucide="${os.pending ? 'lock' : 'unlock'}" class="w-4 h-4"></i>
+        <div class="flex justify-between items-center pt-3 border-t border-slate-700/50 mt-auto gap-2">
+            <button class="btn-lock p-2.5 rounded-lg bg-slate-700/50 hover:bg-slate-700 text-slate-400 hover:text-yellow-400 transition-colors flex-shrink-0" title="${os.pending ? 'Destravar' : 'Travar com Pendência'}">
+                <i data-lucide="${os.pending ? 'lock' : 'unlock'}" class="w-5 h-5"></i>
             </button>
             
             ${hasNext ? `
-                <button class="btn-next bg-blue-600/90 hover:bg-blue-500 text-white pl-3 pr-2 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 shadow hover:shadow-blue-500/20">
+                <button class="btn-next w-full bg-blue-600/90 hover:bg-blue-500 text-white px-3 py-2.5 rounded-lg text-sm font-bold transition-all flex items-center justify-center gap-1 shadow hover:shadow-blue-500/20">
                     Avançar <i data-lucide="chevron-right" class="w-4 h-4"></i>
                 </button>
             ` : `
-                <button class="btn-finish bg-emerald-600/90 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 shadow hover:shadow-emerald-500/20">
+                <button class="btn-finish w-full bg-emerald-600/90 hover:bg-emerald-500 text-white px-3 py-2.5 rounded-lg text-sm font-bold transition-all flex items-center justify-center gap-1 shadow hover:shadow-emerald-500/20">
                     Concluir <i data-lucide="check-circle-2" class="w-4 h-4"></i>
                 </button>
             `}
