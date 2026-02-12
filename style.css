@@ -2,29 +2,46 @@
 
 body { font-family: 'Inter', sans-serif; }
 
-/* Scrollbar invisível mas funcional */
 .no-scrollbar::-webkit-scrollbar { display: none; }
 .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
-/* Custom Scrollbar para Desktop */
 .custom-scrollbar::-webkit-scrollbar { width: 6px; }
 .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
 .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
 .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #475569; }
 
-/* Animações */
 @keyframes slideUp {
     from { transform: translateY(100%); opacity: 0; }
     to { transform: translateY(0); opacity: 1; }
 }
 .animate-slide-up { animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
 
-/* Cartão Mobile */
-.mobile-card {
+/* Card de Componente */
+.part-card {
     background: linear-gradient(145deg, #1e293b, #0f172a);
     border: 1px solid #334155;
     box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+    position: relative;
+    overflow: hidden;
 }
+
+/* Badge do Componente */
+.part-badge {
+    font-size: 10px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: #334155;
+    color: #94a3b8;
+    border: 1px solid #475569;
+}
+
+/* Destaque para Bloco/Cabeçote */
+.part-badge[data-type="Bloco"] { background: rgba(59, 130, 246, 0.1); color: #60a5fa; border-color: rgba(59, 130, 246, 0.3); }
+.part-badge[data-type="Cabeçote"] { background: rgba(168, 85, 247, 0.1); color: #c084fc; border-color: rgba(168, 85, 247, 0.3); }
+.part-badge[data-type="Virabrequim"] { background: rgba(245, 158, 11, 0.1); color: #fbbf24; border-color: rgba(245, 158, 11, 0.3); }
 
 /* Tab Ativa */
 .tab-active {
@@ -34,7 +51,6 @@ body { font-family: 'Inter', sans-serif; }
     box-shadow: 0 0 10px rgba(59, 130, 246, 0.3);
 }
 
-/* Estágios Cores */
 .stage-dot { box-shadow: 0 0 8px currentColor; }
 
 /* Calendário */
@@ -47,10 +63,10 @@ body { font-family: 'Inter', sans-serif; }
     transition: background 0.2s;
 }
 .cal-event {
-    font-size: 10px;
+    font-size: 9px;
     padding: 2px 4px;
     margin-top: 2px;
-    border-radius: 4px;
+    border-radius: 3px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
