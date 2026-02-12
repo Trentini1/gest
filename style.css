@@ -1,61 +1,433 @@
-:root {
-    --dark-bg: #0f172a;
-    --card-bg: #1e293b;
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+import { 
+    getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy, serverTimestamp 
+} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+// --- CONFIGURAÇÃO FIREBASE ---
+const firebaseConfig = {
+    apiKey: "AIzaSyD5gV6Fwsc_Uouxg-_NNIR5OYfHAiAIag0",
+    authDomain: "gest-806b3.firebaseapp.com",
+    projectId: "gest-806b3",
+    storageBucket: "gest-806b3.firebasestorage.app",
+    messagingSenderId: "565058702608",
+    appId: "1:565058702608:web:05c40f1af436c41cbca995"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const COLLECTION_NAME = "servicos_retifica";
+
+// --- ESTADO GLOBAL ---
+let workOrders = [];
+let currentMonth = new Date();
+let viewMode = 'board'; // 'board' or 'calendar'
+
+// Definição Padrão das Colunas
+const DEFAULT_STAGES = [
+    { id: 'desmontagem', label: 'Desmontagem', color: 'border-slate-500' },
+    { id: 'lavacao', label: 'Lavação', color: 'border-blue-500' },
+    { id: 'metrologia', label: 'Metrologia', color: 'border-yellow-500' },
+    { id: 'cilindro', label: 'Cilindro', color: 'border-orange-500' },
+    { id: 'cabecote', label: 'Cabeçote', color: 'border-purple-500' },
+    { id: 'montagem', label: 'Montagem', color: 'border-emerald-500' }
+];
+
+// Carrega ordem salva ou usa padrão
+let currentStages = JSON.parse(localStorage.getItem('retifica_stages_order')) || DEFAULT_STAGES;
+
+// --- INICIALIZAÇÃO ---
+function init() {
+    setupEventListeners();
+    setupClock();
+    
+    // Listener Realtime
+    const q = query(collection(db, COLLECTION_NAME), orderBy("timestamp", "desc"));
+    
+    onSnapshot(q, (snapshot) => {
+        workOrders = snapshot.docs.map(doc => {
+            const data = doc.data();
+            return {
+                id: doc.id,
+                ...data,
+                // Converte timestamp do Firestore ou string para Date object para cálculos
+                deadlineDate: data.deadline ? new Date(data.deadline) : null
+            };
+        });
+        
+        refreshView();
+    }, (error) => {
+        console.error(error);
+        showToast("Erro de conexão com servidor", "error");
+    });
 }
 
-/* Base */
-body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--dark-bg); }
-.custom-scrollbar::-webkit-scrollbar { width: 6px; }
-.custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
-input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-
-/* Animações */
-@keyframes slideIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-.card-enter { animation: slideIn 0.3s ease-out forwards; }
-
-@keyframes pulse-red { 0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); } 70% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); } 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); } }
-.urgent-pulse { animation: pulse-red 2s infinite; border-color: #ef4444 !important; }
-
-/* Calendário */
-.calendar-day {
-    min-height: 100px;
-    background: #1e293b;
-    border: 1px solid #334155;
-    border-radius: 0.5rem;
-    padding: 0.5rem;
-    transition: all 0.2s;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
+function refreshView() {
+    if (viewMode === 'board') {
+        renderBoard();
+    } else {
+        renderCalendar();
+    }
 }
-.calendar-day:hover { background: #263344; border-color: #475569; }
-.calendar-day.today { border: 2px solid #3b82f6; background: #1e293b; }
-.calendar-day.inactive { opacity: 0.3; pointer-events: none; }
 
-.cal-event {
-    font-size: 0.7rem;
-    padding: 2px 4px;
-    border-radius: 4px;
-    background: #334155;
-    color: #e2e8f0;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    cursor: pointer;
-    border-left: 2px solid transparent;
+// --- KANBAN LOGIC ---
+
+function renderBoard() {
+    const container = document.getElementById('board-view');
+    container.innerHTML = '';
+
+    currentStages.forEach(stage => {
+        const column = document.createElement('div');
+        column.className = `min-w-[320px] w-[320px] flex flex-col h-full bg-slate-800/50 rounded-xl border border-slate-700 backdrop-blur-sm`;
+        
+        const ordersInStage = workOrders.filter(o => o.stage === stage.id);
+        
+        column.innerHTML = `
+            <div class="p-3 border-b border-slate-700 flex justify-between items-center bg-slate-800 rounded-t-xl sticky top-0 z-10 shadow-sm">
+                <div class="flex items-center gap-2">
+                    <div class="w-3 h-3 rounded-full ${getStageColor(stage.id)}"></div>
+                    <h3 class="font-bold text-slate-200 uppercase tracking-wider text-sm">${stage.label}</h3>
+                </div>
+                <span class="bg-slate-700 text-xs px-2 py-1 rounded-full text-slate-300 font-mono">${ordersInStage.length}</span>
+            </div>
+            <div class="flex-1 p-2 overflow-y-auto space-y-3 custom-scrollbar" id="col-${stage.id}"></div>
+        `;
+
+        const list = column.querySelector(`#col-${stage.id}`);
+        ordersInStage.forEach(os => list.appendChild(createCard(os)));
+        container.appendChild(column);
+    });
+
+    if(window.lucide) window.lucide.createIcons();
 }
-.cal-event:hover { transform: scale(1.02); z-index: 10; }
 
-/* Status de Prazo */
-.status-badge { font-size: 10px; padding: 2px 6px; border-radius: 10px; font-weight: bold; text-transform: uppercase; }
-.status-late { background: #450a0a; color: #fca5a5; border: 1px solid #7f1d1d; }
-.status-warning { background: #422006; color: #fdba74; border: 1px solid #9a3412; }
-.status-ok { background: #064e3b; color: #6ee7b7; border: 1px solid #065f46; }
+function createCard(os) {
+    const el = document.createElement('div');
+    const status = checkDeadlineStatus(os.deadlineDate);
+    
+    el.className = `bg-slate-700 p-3 rounded-lg border-l-4 shadow-lg relative group select-none card-enter 
+        ${os.priority ? 'urgent-pulse border-red-500' : 'border-slate-500'} 
+        ${os.pending ? 'border-yellow-500 opacity-90' : ''}`;
+    
+    // Status visual do prazo
+    let badgeHtml = '';
+    if (status === 'late') badgeHtml = `<span class="status-badge status-late">ATRASADO</span>`;
+    else if (status === 'warning') badgeHtml = `<span class="status-badge status-warning">HOJE</span>`;
+    else badgeHtml = `<span class="status-badge status-ok">NO PRAZO</span>`;
 
-/* Botões de Ordem (Settings) */
-.order-btn { padding: 4px; border-radius: 4px; background: #334155; color: white; }
-.order-btn:hover { background: #475569; }
-.order-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+    // Botões de ação
+    const nextStageIdx = currentStages.findIndex(s => s.id === os.stage) + 1;
+    const hasNext = nextStageIdx < currentStages.length;
 
-/* View Transitions */
-.view-active { background: #334155 !important; color: white !important; }
+    el.innerHTML = `
+        <div class="flex justify-between items-start mb-2">
+            <span class="font-mono text-sm font-bold text-emerald-400">OS #${os.osNumber || '???'}</span>
+            ${badgeHtml}
+        </div>
+        
+        <h4 class="font-bold text-slate-100 text-lg leading-tight mb-1">${os.motor}</h4>
+        <p class="text-xs text-slate-300 mb-2 truncate font-medium">${os.cliente}</p>
+        
+        <div class="flex items-center gap-1 text-[10px] text-slate-400 mb-2 bg-slate-800/50 p-1 rounded w-fit">
+            <i data-lucide="clock" class="w-3 h-3"></i> 
+            ${os.deadlineDate ? os.deadlineDate.toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : 'Sem prazo'}
+        </div>
+
+        ${os.pending ? `
+            <div class="bg-yellow-900/40 border border-yellow-700/50 text-yellow-200 text-xs p-2 rounded mb-2 flex items-center gap-2">
+                <i data-lucide="alert-triangle" class="w-4 h-4 text-yellow-500"></i> 
+                <span>${os.pendingReason}</span>
+            </div>
+        ` : ''}
+
+        <div class="flex justify-between items-center mt-3 pt-2 border-t border-slate-600/50 opacity-100 transition-opacity">
+            <button class="btn-lock p-1.5 rounded hover:bg-slate-600 text-slate-400 hover:text-yellow-400" title="Pendência">
+                <i data-lucide="${os.pending ? 'lock' : 'unlock'}" class="w-4 h-4"></i>
+            </button>
+            
+            ${hasNext ? `
+                <button class="btn-next bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded text-xs font-bold transition-colors flex items-center gap-1">
+                    Próximo <i data-lucide="chevron-right" class="w-3 h-3"></i>
+                </button>
+            ` : `
+                <button class="btn-finish bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded text-xs font-bold transition-colors flex items-center gap-1">
+                    Concluir <i data-lucide="check" class="w-3 h-3"></i>
+                </button>
+            `}
+        </div>
+    `;
+
+    // Event Listeners isolados
+    el.querySelector('.btn-lock').onclick = () => togglePending(os);
+    if(hasNext) el.querySelector('.btn-next').onclick = () => moveStage(os, currentStages[nextStageIdx].id);
+    else el.querySelector('.btn-finish').onclick = () => finishOS(os);
+
+    return el;
+}
+
+// --- CALENDAR LOGIC ---
+
+function renderCalendar() {
+    const grid = document.getElementById('calendar-grid');
+    const title = document.getElementById('calendar-month-title');
+    grid.innerHTML = '';
+    
+    // Configura datas
+    const year = currentMonth.getFullYear();
+    const month = currentMonth.getMonth();
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    const startPadding = firstDay.getDay(); // 0 = Dom
+    
+    title.textContent = firstDay.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }).toUpperCase();
+
+    // Dias vazios antes do dia 1
+    for(let i=0; i<startPadding; i++) {
+        const div = document.createElement('div');
+        div.className = 'calendar-day inactive';
+        grid.appendChild(div);
+    }
+
+    // Dias do mês
+    const todayStr = new Date().toDateString();
+
+    for(let i=1; i<=lastDay.getDate(); i++) {
+        const date = new Date(year, month, i);
+        const dayDiv = document.createElement('div');
+        const isToday = date.toDateString() === todayStr;
+        
+        dayDiv.className = `calendar-day ${isToday ? 'today' : ''}`;
+        dayDiv.innerHTML = `<span class="text-xs font-bold text-slate-500 mb-1">${i}</span>`;
+
+        // Encontrar OS deste dia
+        const daysOS = workOrders.filter(os => {
+            if(!os.deadlineDate) return false;
+            return os.deadlineDate.getDate() === i && 
+                   os.deadlineDate.getMonth() === month &&
+                   os.deadlineDate.getFullYear() === year;
+        });
+
+        daysOS.forEach(os => {
+            const event = document.createElement('div');
+            const status = checkDeadlineStatus(os.deadlineDate);
+            let border = status === 'late' ? 'border-red-500' : (status === 'warning' ? 'border-orange-500' : 'border-emerald-500');
+            
+            event.className = `cal-event ${border}`;
+            event.innerHTML = `<span class="font-bold">#${os.osNumber}</span> ${os.motor}`;
+            event.title = `${os.cliente} - ${os.stage.toUpperCase()}`;
+            dayDiv.appendChild(event);
+        });
+
+        grid.appendChild(dayDiv);
+    }
+}
+
+// --- AÇÕES DO USUÁRIO ---
+
+async function createNewOS(e) {
+    e.preventDefault();
+    const btn = document.getElementById('btn-submit');
+    const originalText = btn.innerHTML;
+    
+    // Feedback visual imediato (Loading)
+    btn.disabled = true;
+    btn.innerHTML = `<i data-lucide="loader-2" class="animate-spin w-4 h-4"></i> Salvando...`;
+
+    try {
+        const data = {
+            osNumber: document.getElementById('input-os-num').value,
+            deadline: document.getElementById('input-prazo').value, // ISO String
+            cliente: document.getElementById('input-cliente').value,
+            motor: document.getElementById('input-motor').value,
+            tipo: document.getElementById('input-tipo').value,
+            priority: document.getElementById('input-prioridade').checked,
+            stage: currentStages[0].id, // Primeiro estágio atual
+            pending: false,
+            timestamp: serverTimestamp()
+        };
+
+        await addDoc(collection(db, COLLECTION_NAME), data);
+        
+        closeModal();
+        showToast("OS Salva com sucesso!");
+        // Não precisa chamar renderBoard(), o onSnapshot faz isso sozinho
+    } catch (error) {
+        console.error(error);
+        alert("Erro ao salvar! Verifique console.");
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalText;
+    }
+}
+
+async function moveStage(os, nextStageId) {
+    if(os.pending) {
+        showToast("Resolva a pendência antes de mover!", "error");
+        return;
+    }
+    await updateDoc(doc(db, COLLECTION_NAME, os.id), { stage: nextStageId });
+}
+
+async function finishOS(os) {
+    if(confirm(`Finalizar a OS #${os.osNumber}?`)) {
+        await deleteDoc(doc(db, COLLECTION_NAME, os.id));
+        showToast("OS Finalizada e Arquivada");
+    }
+}
+
+async function togglePending(os) {
+    const ref = doc(db, COLLECTION_NAME, os.id);
+    if(os.pending) {
+        await updateDoc(ref, { pending: false, pendingReason: null });
+    } else {
+        const reason = prompt("Motivo da Pendência:");
+        if(reason) await updateDoc(ref, { pending: true, pendingReason: reason });
+    }
+}
+
+// --- UTILITÁRIOS ---
+
+function checkDeadlineStatus(dateObj) {
+    if(!dateObj) return 'ok';
+    const now = new Date();
+    const diff = dateObj - now;
+    
+    if (diff < 0) return 'late'; // Já passou
+    if (diff < 86400000) return 'warning'; // Menos de 24h
+    return 'ok';
+}
+
+function getStageColor(id) {
+    const map = {
+        'desmontagem': 'bg-slate-400', 'lavacao': 'bg-blue-400', 'metrologia': 'bg-yellow-400',
+        'cilindro': 'bg-orange-400', 'cabecote': 'bg-purple-400', 'montagem': 'bg-emerald-400'
+    };
+    return map[id] || 'bg-slate-500';
+}
+
+function setupClock() {
+    setInterval(() => {
+        const now = new Date();
+        document.getElementById('clock').textContent = now.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
+    }, 1000);
+}
+
+// --- GERENCIAMENTO DE TABS/VIEW ---
+
+function setupEventListeners() {
+    // Forms
+    document.getElementById('new-os-form').onsubmit = createNewOS;
+    
+    // Modals
+    const modal = document.getElementById('modal');
+    document.getElementById('btn-new-os').onclick = () => {
+        modal.classList.remove('hidden');
+        setTimeout(() => modal.classList.remove('opacity-0'), 10);
+    };
+    document.getElementById('btn-cancel').onclick = closeModal;
+    document.getElementById('modal-close-x').onclick = closeModal;
+    
+    // View Switcher
+    const btnBoard = document.getElementById('view-board');
+    const btnCal = document.getElementById('view-calendar');
+    const divBoard = document.getElementById('board-view');
+    const divCal = document.getElementById('calendar-view');
+
+    btnBoard.onclick = () => {
+        viewMode = 'board';
+        btnBoard.classList.add('view-active');
+        btnCal.classList.remove('view-active');
+        divBoard.classList.remove('-translate-x-full');
+        divCal.classList.add('translate-x-full');
+        renderBoard();
+    };
+
+    btnCal.onclick = () => {
+        viewMode = 'calendar';
+        btnCal.classList.add('view-active');
+        btnBoard.classList.remove('view-active');
+        divBoard.classList.add('-translate-x-full');
+        divCal.classList.remove('translate-x-full');
+        renderCalendar();
+    };
+
+    // Calendar Nav
+    document.getElementById('cal-prev').onclick = () => {
+        currentMonth.setMonth(currentMonth.getMonth() - 1);
+        renderCalendar();
+    };
+    document.getElementById('cal-next').onclick = () => {
+        currentMonth.setMonth(currentMonth.getMonth() + 1);
+        renderCalendar();
+    };
+
+    // Settings (Reorder)
+    document.getElementById('btn-settings').onclick = openSettings;
+    window.closeSettings = () => document.getElementById('modal-settings').classList.add('hidden');
+    window.resetSettings = () => {
+        localStorage.removeItem('retifica_stages_order');
+        currentStages = DEFAULT_STAGES;
+        renderBoard();
+        closeSettings();
+        showToast("Ordem padrão restaurada");
+    };
+}
+
+function openSettings() {
+    const list = document.getElementById('settings-list');
+    list.innerHTML = '';
+    
+    currentStages.forEach((stage, index) => {
+        const item = document.createElement('div');
+        item.className = 'flex items-center justify-between bg-slate-700 p-2 rounded border border-slate-600';
+        item.innerHTML = `
+            <span class="text-sm font-bold text-slate-200">${stage.label}</span>
+            <div class="flex gap-1">
+                <button class="order-btn" onclick="moveStageOrder(${index}, -1)" ${index === 0 ? 'disabled' : ''}>
+                    <i data-lucide="arrow-up" class="w-3 h-3"></i>
+                </button>
+                <button class="order-btn" onclick="moveStageOrder(${index}, 1)" ${index === currentStages.length - 1 ? 'disabled' : ''}>
+                    <i data-lucide="arrow-down" class="w-3 h-3"></i>
+                </button>
+            </div>
+        `;
+        list.appendChild(item);
+    });
+
+    document.getElementById('modal-settings').classList.remove('hidden');
+    if(window.lucide) window.lucide.createIcons();
+}
+
+window.moveStageOrder = (index, direction) => {
+    const newStages = [...currentStages];
+    const temp = newStages[index];
+    newStages[index] = newStages[index + direction];
+    newStages[index + direction] = temp;
+    
+    currentStages = newStages;
+    localStorage.setItem('retifica_stages_order', JSON.stringify(currentStages));
+    openSettings(); // Re-render lista
+    renderBoard(); // Re-render quadro
+};
+
+function closeModal() {
+    const modal = document.getElementById('modal');
+    modal.classList.add('opacity-0');
+    setTimeout(() => {
+        modal.classList.add('hidden');
+        document.getElementById('new-os-form').reset();
+    }, 300);
+}
+
+function showToast(msg, type = 'success') {
+    const toast = document.getElementById('toast');
+    document.getElementById('toast-msg').innerText = msg;
+    const color = type === 'error' ? 'red' : 'emerald';
+    
+    toast.className = `fixed bottom-5 right-5 z-50 transform transition-all duration-300 bg-slate-800 text-white px-4 py-3 rounded-lg shadow-xl border-l-4 border-${color}-500 flex items-center gap-3`;
+    
+    toast.classList.remove('translate-y-20', 'opacity-0');
+    setTimeout(() => toast.classList.add('translate-y-20', 'opacity-0'), 3000);
+}
+
+// Iniciar
+init();
