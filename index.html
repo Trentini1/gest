@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Retífica Flow System</title>
+    
+    <!-- Tailwind via CDN (Para dev rápido, em produção real use build) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Ícones Lucide -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- Nosso CSS Customizado -->
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="h-screen flex flex-col overflow-hidden">
+
+    <!-- Header -->
+    <header class="bg-slate-900 border-b border-slate-700 p-4 flex justify-between items-center shadow-lg z-10">
+        <div class="flex items-center gap-3">
+            <i data-lucide="settings" class="text-blue-500 w-8 h-8 animate-spin-slow"></i>
+            <div>
+                <h1 class="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-emerald-400">RETÍFICA MANAGER</h1>
+                <p class="text-xs text-slate-400 flex items-center gap-1">
+                    <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> Online
+                </p>
+            </div>
+        </div>
+        <button id="btn-new-os" class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-full font-bold shadow-lg transition-all hover:scale-105 flex items-center gap-2">
+            <i data-lucide="plus-circle" class="w-5 h-5"></i> Nova O.S.
+        </button>
+    </header>
+
+    <!-- Main Board -->
+    <main class="flex-1 overflow-x-auto overflow-y-hidden p-6 bg-slate-900">
+        <div class="flex gap-4 h-full min-w-max" id="board-container">
+            <!-- Colunas geradas via JS -->
+            <div class="flex items-center justify-center w-full text-slate-500 gap-2">
+                <i data-lucide="loader-2" class="animate-spin"></i> Carregando dados da Retífica...
+            </div>
+        </div>
+    </main>
+
+    <!-- Modal Nova OS -->
+    <div id="modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm hidden items-center justify-center z-50 opacity-0 transition-opacity duration-300">
+        <div class="bg-slate-800 p-6 rounded-xl w-full max-w-md border border-slate-600 shadow-2xl transform scale-90 transition-transform duration-300" id="modal-content">
+            <h2 class="text-xl font-bold mb-4 text-white flex items-center gap-2">
+                <i data-lucide="file-plus" class="text-emerald-400"></i> Entrada de Serviço
+            </h2>
+            
+            <form id="new-os-form" class="space-y-4">
+                <div>
+                    <label class="block text-sm text-slate-400 mb-1">Cliente</label>
+                    <input type="text" id="input-cliente" required class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white focus:border-blue-500 outline-none" placeholder="Ex: Mecânica do Jão">
+                </div>
+                <div>
+                    <label class="block text-sm text-slate-400 mb-1">Veículo/Motor</label>
+                    <input type="text" id="input-motor" required class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white focus:border-blue-500 outline-none" placeholder="Ex: GM VHC 1.0">
+                </div>
+                <div>
+                    <label class="block text-sm text-slate-400 mb-1">Tipo de Serviço</label>
+                    <select id="input-tipo" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white focus:border-blue-500 outline-none">
+                        <option value="Completo">Motor Completo</option>
+                        <option value="Cabecote">Só Cabeçote</option>
+                        <option value="Bloco">Só Bloco</option>
+                    </select>
+                </div>
+                <div class="flex items-center gap-2">
+                    <input type="checkbox" id="input-prioridade" class="w-5 h-5 accent-red-500 rounded cursor-pointer">
+                    <label for="input-prioridade" class="text-red-400 font-bold cursor-pointer">URGENTE / GARANTIA</label>
+                </div>
+
+                <div class="flex justify-end gap-3 mt-6">
+                    <button type="button" id="btn-cancel" class="px-4 py-2 text-slate-400 hover:text-white transition-colors">Cancelar</button>
+                    <button type="submit" class="bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-2 rounded-lg font-bold shadow-lg hover:shadow-emerald-500/20 transition-all">Lançar no Sistema</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Notification Toast -->
+    <div id="toast" class="fixed bottom-5 right-5 bg-slate-800 text-white px-4 py-3 rounded-lg shadow-xl border-l-4 border-emerald-500 transform translate-y-20 opacity-0 transition-all duration-300 flex items-center gap-3 z-50">
+        <i data-lucide="check-circle" class="text-emerald-500"></i>
+        <span id="toast-msg">Operação realizada</span>
+    </div>
+
+    <!-- Lógica Principal (Module) -->
+    <script type="module" src="app.js"></script>
+</body>
+</html>
