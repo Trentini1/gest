@@ -15,7 +15,18 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
-const COLLECTION_NAME = "servicos_retifica_v4"; 
+const COLLECTION_NAME = "servicos_retifica_v5"; // V5 para resetar a ordem e colunas
+
+// --- GPS DE PEÇAS (ROTEAMENTO) ---
+// Define para onde cada peça vai quando sai do Orçamento
+const PART_ROUTING = {
+    "Cabeçote": "cabecote",
+    "Bloco": "bloco",
+    "Virabrequim": "virabrequim",
+    "Bielas": "bielas",
+    "Comando": "virabrequim", // Comando geralmente fica no setor de virabrequim/bielas
+    "Peças Diversas": "bielas" // Ou cria um setor "Geral"
+};
 
 // --- CATÁLOGO DE SERVIÇOS ---
 const SERVICE_CATALOG = {
@@ -83,16 +94,24 @@ let activeStageMobile = null;
 let editingId = null;
 let resizeTimeout; 
 
+// NOVAS COLUNAS E ORDEM CORRIGIDA
 const DEFAULT_STAGES = [
     { id: 'lavacao', label: 'Lavação / Entrada', color: 'text-blue-400', isGrouped: true },
     { id: 'orcamento', label: 'Inspeção & Orçamento', color: 'text-red-400', isGrouped: true },
-    { id: 'metrologia', label: 'Metrologia', color: 'text-yellow-400', isGrouped: false },
-    { id: 'cilindro', label: 'Cilindro/Bloco', color: 'text-orange-400', isGrouped: false },
-    { id: 'cabecote', label: 'Cabeçote', color: 'text-purple-400', isGrouped: false },
-    { id: 'montagem', label: 'Montagem', color: 'text-emerald-400', isGrouped: false }
+    // Setores de Produção (Paralelos)
+    { id: 'cabecote', label: 'Setor de Cabeçote', color: 'text-purple-400', isGrouped: false },
+    { id: 'bloco', label: 'Setor de Bloco', color: 'text-orange-400', isGrouped: false },
+    { id: 'virabrequim', label: 'Setor de Virabrequim', color: 'text-indigo-400', isGrouped: false },
+    { id: 'bielas', label: 'Setor de Bielas', color: 'text-pink-400', isGrouped: false },
+    // Finalização
+    { id: 'montagem', label: 'Montagem', color: 'text-emerald-400', isGrouped: false },
+    { id: 'metrologia', label: 'Metrologia Final', color: 'text-yellow-400', isGrouped: false }, // PENÚLTIMO
 ];
 
-let currentStages = JSON.parse(localStorage.getItem('retifica_stages_order')) || DEFAULT_STAGES;
+// Tenta recuperar ordem salva, mas se faltar colunas novas (Vira/Biela), reseta
+let currentStages = JSON.parse(localStorage.getItem('retifica_stages_order_v5')) || DEFAULT_STAGES;
+if (currentStages.length < DEFAULT_STAGES.length) currentStages = DEFAULT_STAGES;
+
 if(!activeStageMobile && currentStages.length > 0) activeStageMobile = currentStages[0].id;
 
 // --- INICIALIZAÇÃO ---
@@ -151,14 +170,14 @@ function setupGlobalFunctions() {
     };
 
     window.closeSettings = () => {
-        localStorage.setItem('retifica_stages_order', JSON.stringify(currentStages));
+        localStorage.setItem('retifica_stages_order_v5', JSON.stringify(currentStages));
         document.getElementById('modal-settings').classList.add('hidden');
         renderApp();
         showToast("Ordem salva!");
     };
 
     window.resetSettings = () => {
-        localStorage.removeItem('retifica_stages_order');
+        localStorage.removeItem('retifica_stages_order_v5');
         currentStages = DEFAULT_STAGES;
         window.openSettings();
     };
@@ -175,7 +194,7 @@ function setupGlobalFunctions() {
     };
 
     window.approveOS = async (id) => {
-        if(!confirm("Aprovar orçamento? Isso liberará as peças para produção.")) return;
+        if(!confirm("Aprovar orçamento? Isso distribuirá as peças para seus setores.")) return;
         try {
             await updateDoc(doc(db, COLLECTION_NAME, id), { approved: true });
             showToast("✅ Orçamento Aprovado!");
@@ -199,16 +218,12 @@ function setupGlobalFunctions() {
         // --- GERAÇÃO DO CHECKLIST ---
         Object.keys(SERVICE_CATALOG).forEach(part => {
             const isChecked = os.components && os.components[part];
-            
-            // Verifica serviços
             const savedServices = (os.services && os.services[part]) 
                 ? (Array.isArray(os.services[part]) ? os.services[part] : [os.services[part]]) 
                 : [];
             
-            // Verifica pendências (NOVO)
             const pendencyReason = os.pendencies && os.pendencies[part] ? os.pendencies[part] : '';
 
-            // Cria o Accordion
             const details = document.createElement('details');
             details.className = `group rounded-lg border ${isChecked ? 'border-blue-500/50 bg-blue-900/5' : 'border-slate-700 bg-slate-900'} transition-all open:bg-slate-800 open:border-blue-500 mb-2`;
             if (isChecked) details.open = true;
@@ -248,17 +263,17 @@ function setupGlobalFunctions() {
                 placeholder="Outro serviço...">
             `;
 
-            // ÁREA DE PENDÊNCIA (BLOQUEIO)
+            // ÁREA DE PENDÊNCIA (BLOQUEIO) - BEM VISÍVEL
             const pendencyDiv = document.createElement('div');
             pendencyDiv.className = "mt-3 pt-3 border-t border-slate-700/50";
             pendencyDiv.innerHTML = `
-                <label class="flex items-center gap-2 text-red-400 font-bold text-xs mb-2 cursor-pointer">
-                    <input type="checkbox" class="accent-red-500" onchange="this.nextElementSibling.nextElementSibling.classList.toggle('hidden')" ${pendencyReason ? 'checked' : ''}>
-                    <i data-lucide="lock" class="w-3 h-3"></i> 🛑 Bloquear por Falta de Peça?
+                <label class="flex items-center gap-2 text-red-400 font-bold text-xs mb-2 cursor-pointer bg-red-900/10 p-2 rounded border border-red-900/30 hover:bg-red-900/20">
+                    <input type="checkbox" class="accent-red-500" onchange="const input = this.parentElement.nextElementSibling; input.classList.toggle('hidden'); if(!this.checked) input.value = '';" ${pendencyReason ? 'checked' : ''}>
+                    <i data-lucide="lock" class="w-3 h-3"></i> TRAVAR PEÇA (Falta algo?)
                 </label>
                 <input type="text" name="pendency-${part}" value="${pendencyReason}" 
-                    class="${pendencyReason ? '' : 'hidden'} w-full bg-red-900/10 border border-red-900/50 rounded p-2 text-xs text-red-200 focus:border-red-500 outline-none placeholder-red-500/50"
-                    placeholder="O que está faltando? (Ex: Válvulas de escape)">
+                    class="${pendencyReason ? '' : 'hidden'} w-full bg-red-900/20 border border-red-500/50 rounded p-2 text-xs text-red-200 focus:border-red-500 outline-none placeholder-red-400/50 animate-pulse"
+                    placeholder="DIGITE O MOTIVO DA PENDÊNCIA AQUI...">
             `;
             content.appendChild(pendencyDiv);
 
@@ -460,13 +475,12 @@ function createGroupedCard(os, stageId) {
                     <span class="text-xs font-bold ${isPending ? 'text-red-400' : 'text-slate-300'}">${p}:</span>
                     ${isPending ? '<i data-lucide="lock" class="w-3 h-3 text-red-500"></i>' : ''}
                 </div>
-                ${isPending ? `<span class="text-[10px] text-red-400 font-bold block">FALTA: ${os.pendencies[p]}</span>` : ''}
+                ${isPending ? `<span class="text-[10px] text-red-400 font-bold block bg-red-900/20 rounded p-1">⚠️ FALTA: ${os.pendencies[p]}</span>` : ''}
                 <span class="text-[10px] text-slate-500 leading-tight block">${servText}</span>
             </div>
         `;
     }).join('');
 
-    // BOTÕES DE AÇÃO
     let actionButtons = '';
     
     if (stageId === 'orcamento' && !os.approved) {
@@ -487,7 +501,7 @@ function createGroupedCard(os, stageId) {
                 <span class="text-[10px] text-emerald-400 font-bold tracking-wide">PRODUÇÃO AUTORIZADA</span>
             </div>
             <button onclick="advanceGroup('${os.id}', '${stageId}')" class="w-full bg-blue-600 hover:bg-blue-500 text-white py-2.5 rounded font-bold text-xs shadow-lg shadow-blue-900/20 flex justify-center items-center gap-2">
-                Enviar para Setores <i data-lucide="arrow-right-circle" class="w-4 h-4"></i>
+                Distribuir p/ Setores <i data-lucide="arrow-right-circle" class="w-4 h-4"></i>
             </button>
         `;
     } 
@@ -523,7 +537,6 @@ function createGroupedCard(os, stageId) {
 // --- CARD: PEÇA INDIVIDUAL (Produção com BLOQUEIO) ---
 function createPartCard(os, partName, currentStageId) {
     const el = document.createElement('div');
-    const deadlineStatus = getDeadlineStatus(os.deadlineDate);
     const servs = os.services && os.services[partName];
     const serviceNote = (Array.isArray(servs) ? servs.join(', ') : servs) || 'Serviço Padrão';
     
@@ -534,8 +547,10 @@ function createPartCard(os, partName, currentStageId) {
     const stageIdx = currentStages.findIndex(s => s.id === currentStageId);
     const hasNext = stageIdx < currentStages.length - 1;
 
-    // Estilo visual de bloqueio
-    const bgClass = isLocked ? 'bg-red-900/10 border-red-800' : 'bg-slate-800 border-slate-700';
+    // Estilo visual de bloqueio: Fundo listrado de vermelho ou sólido
+    const bgClass = isLocked 
+        ? 'bg-[repeating-linear-gradient(45deg,#3f1a1a,#3f1a1a_10px,#4f2020_10px,#4f2020_20px)] border-red-500' 
+        : 'bg-slate-800 border-slate-700';
 
     el.className = `part-card relative p-3 rounded-lg border-l-4 ${bgClass} transition-all active:scale-[0.99] group`;
     
@@ -552,8 +567,8 @@ function createPartCard(os, partName, currentStageId) {
             <h4 class="text-white font-bold text-sm leading-tight truncate">${os.motor}</h4>
             
             ${isLocked ? `
-                <div class="text-red-300 text-[10px] font-bold mt-1 bg-red-900/30 p-1.5 rounded border border-red-500/30 flex items-start gap-1">
-                   <span>⚠️ FALTA: ${pendencyReason}</span>
+                <div class="text-red-200 text-[10px] font-bold mt-1 bg-red-950 p-2 rounded border border-red-500/50 flex items-start gap-1 shadow-lg">
+                   <span>🛑 PENDÊNCIA: ${pendencyReason}</span>
                 </div>
             ` : `
                 <div class="text-blue-300 text-[10px] font-medium mt-1 bg-blue-900/10 p-1.5 rounded border border-blue-900/30 leading-snug">
@@ -565,7 +580,7 @@ function createPartCard(os, partName, currentStageId) {
         <div class="flex items-center gap-2 mt-3">
             ${isLocked ? `
                 <button class="btn-resolve w-full bg-orange-600 hover:bg-orange-500 text-white py-1.5 rounded text-xs font-bold transition-colors flex justify-center gap-1 shadow-lg shadow-orange-900/20">
-                    <i data-lucide="unlock" class="w-3 h-3"></i> Resolver Pendência
+                    <i data-lucide="unlock" class="w-3 h-3"></i> RESOLVER PENDÊNCIA
                 </button>
             ` : (hasNext ? `
                 <button class="btn-move flex-1 bg-slate-700 hover:bg-blue-600 text-slate-300 hover:text-white py-1.5 rounded text-xs font-bold transition-colors flex justify-center gap-1">
@@ -613,9 +628,8 @@ async function handleOSSubmit(e) {
 
         const componentsMap = {};
         const servicesMap = {};
-        const pendenciesMap = {}; // NOVO: Mapa de pendências
+        const pendenciesMap = {}; 
         
-        // Recupera dados antigos se estiver editando
         let currentComponents = {};
         if (editingId) {
             const oldOS = workOrders.find(o => o.id === editingId);
@@ -637,9 +651,11 @@ async function handleOSSubmit(e) {
 
                 if(selectedServices.length > 0) servicesMap[part] = selectedServices;
 
-                // Captura Pendência
+                // Captura Pendência (Corrigido para garantir que não pegue valor vazio)
                 const pendencyInput = document.querySelector(`input[name="pendency-${part}"]`);
-                if(pendencyInput && !pendencyInput.classList.contains('hidden') && pendencyInput.value.trim()) {
+                const hasPendency = pendencyInput && !pendencyInput.classList.contains('hidden') && pendencyInput.value.trim().length > 0;
+                
+                if(hasPendency) {
                     pendenciesMap[part] = pendencyInput.value.trim();
                 }
             }
@@ -651,7 +667,7 @@ async function handleOSSubmit(e) {
             ...osData,
             components: componentsMap,
             services: servicesMap,
-            pendencies: pendenciesMap // Salva pendências
+            pendencies: pendenciesMap
         };
 
         if (editingId) {
@@ -672,23 +688,31 @@ async function handleOSSubmit(e) {
     }
 }
 
+// --- INTELEGÊNCIA DE ROTEAMENTO (DISTRIBUIR PEÇAS) ---
 window.advanceGroup = async (osId, currentStageId) => {
     try {
         const os = workOrders.find(o => o.id === osId);
         if(!os) return;
 
         const idx = currentStages.findIndex(s => s.id === currentStageId);
-        const nextStage = currentStages[idx + 1].id;
+        // Se estiver no orçamento, usa o roteador inteligente. Se não, vai pro próximo.
+        const nextStageDefault = currentStages[idx + 1].id;
 
         const newComponents = { ...os.components };
+        
         Object.keys(newComponents).forEach(key => {
             if(newComponents[key] === currentStageId) {
-                newComponents[key] = nextStage;
+                if (currentStageId === 'orcamento') {
+                    // AQUI A MÁGICA: Distribui para o setor correto
+                    newComponents[key] = PART_ROUTING[key] || 'montagem';
+                } else {
+                    newComponents[key] = nextStageDefault;
+                }
             }
         });
 
         await updateDoc(doc(db, COLLECTION_NAME, osId), { components: newComponents });
-        showToast("Avançado para " + currentStages[idx + 1].label);
+        showToast("Peças Distribuídas!");
     } catch(e) { console.error(e); }
 };
 
@@ -699,12 +723,10 @@ async function deleteOS(id) {
 }
 
 async function movePart(os, partName, nextStageId) {
-    // BLOQUEIO DE SEGURANÇA
     if (os.pendencies && os.pendencies[partName]) {
-        alert(`❌ AÇÃO BLOQUEADA!\n\nPeça: ${partName}\nMotivo: ${os.pendencies[partName]}\n\nResolva a pendência antes de avançar.`);
+        alert(`❌ AÇÃO BLOQUEADA!\n\nPeça: ${partName}\nMotivo: ${os.pendencies[partName]}`);
         return;
     }
-
     try {
         const osRef = doc(db, COLLECTION_NAME, os.id);
         const newComponents = { ...os.components };
