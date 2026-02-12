@@ -15,21 +15,22 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
-const COLLECTION_NAME = "servicos_retifica_v2";
+const COLLECTION_NAME = "servicos_retifica_v3"; // Nova versão para limpar dados antigos incompatíveis
 
 // --- ESTADO ---
 let workOrders = [];
 let currentMonth = new Date();
 let activeStageMobile = null;
-let editingId = null; // Para controlar se estamos criando ou editando
+let editingId = null;
 
+// NOVOS ESTÁGIOS: Fluxo Funil
 const DEFAULT_STAGES = [
-    { id: 'desmontagem', label: 'Desmontagem', color: 'text-slate-400' },
-    { id: 'lavacao', label: 'Lavação', color: 'text-blue-400' },
-    { id: 'metrologia', label: 'Metrologia', color: 'text-yellow-400' },
-    { id: 'cilindro', label: 'Cilindro', color: 'text-orange-400' },
-    { id: 'cabecote', label: 'Cabeçote', color: 'text-purple-400' },
-    { id: 'montagem', label: 'Montagem', color: 'text-emerald-400' }
+    { id: 'lavacao', label: 'Lavação', color: 'text-blue-400', isGrouped: true },
+    { id: 'orcamento', label: 'Inspeção/Orçamento', color: 'text-red-400', isGrouped: true },
+    { id: 'metrologia', label: 'Metrologia', color: 'text-yellow-400', isGrouped: false },
+    { id: 'cilindro', label: 'Cilindro/Bloco', color: 'text-orange-400', isGrouped: false },
+    { id: 'cabecote', label: 'Cabeçote', color: 'text-purple-400', isGrouped: false },
+    { id: 'montagem', label: 'Montagem', color: 'text-emerald-400', isGrouped: false }
 ];
 
 let currentStages = JSON.parse(localStorage.getItem('retifica_stages_order')) || DEFAULT_STAGES;
@@ -37,7 +38,7 @@ if(!activeStageMobile && currentStages.length > 0) activeStageMobile = currentSt
 
 // --- INICIALIZAÇÃO ---
 function init() {
-    setupGlobalFunctions(); // Resolve o erro de ReferenceError
+    setupGlobalFunctions();
     setupUI();
     
     const q = query(collection(db, COLLECTION_NAME), orderBy("timestamp", "desc"));
@@ -56,13 +57,13 @@ function init() {
     window.addEventListener('resize', renderApp);
 }
 
-// --- EXPOR FUNÇÕES PARA O HTML (FIX ERRO CONSOLE) ---
+// --- FUNÇÕES GLOBAIS ---
 function setupGlobalFunctions() {
+    // Configurações
     window.openSettings = () => {
         const modal = document.getElementById('modal-settings');
         const list = document.getElementById('settings-list');
         if(!modal || !list) return;
-
         list.innerHTML = '';
         currentStages.forEach((stage, idx) => {
             const item = document.createElement('div');
@@ -70,13 +71,12 @@ function setupGlobalFunctions() {
             item.innerHTML = `
                 <span class="text-sm font-bold text-white">${stage.label}</span>
                 <div class="flex gap-1">
-                    <button onclick="moveOrder(${idx}, -1)" class="p-1 hover:bg-slate-600 rounded ${idx===0?'opacity-30':''}"><i data-lucide="arrow-up" class="w-4 h-4"></i></button>
-                    <button onclick="moveOrder(${idx}, 1)" class="p-1 hover:bg-slate-600 rounded ${idx===currentStages.length-1?'opacity-30':''}"><i data-lucide="arrow-down" class="w-4 h-4"></i></button>
+                    <button onclick="moveOrder(${idx}, -1)" class="p-1 hover:bg-slate-600 rounded opacity-70 hover:opacity-100"><i data-lucide="arrow-up" class="w-4 h-4"></i></button>
+                    <button onclick="moveOrder(${idx}, 1)" class="p-1 hover:bg-slate-600 rounded opacity-70 hover:opacity-100"><i data-lucide="arrow-down" class="w-4 h-4"></i></button>
                 </div>
             `;
             list.appendChild(item);
         });
-        
         modal.classList.remove('hidden');
         if(window.lucide) window.lucide.createIcons();
     };
@@ -102,8 +102,9 @@ function setupGlobalFunctions() {
         window.openSettings();
     };
 
+    // Modal Nova/Edit OS
     window.openModal = () => {
-        editingId = null; // Modo criação
+        editingId = null;
         resetForm();
         document.getElementById('modal').classList.remove('hidden');
     };
@@ -113,38 +114,65 @@ function setupGlobalFunctions() {
         resetForm();
     };
 
-    // Nova função de Edição
     window.editOS = (id) => {
         const os = workOrders.find(o => o.id === id);
         if(!os) return;
 
-        editingId = id; // Modo edição
-        
-        // Preenche formulário
+        editingId = id;
         document.getElementById('input-os-num').value = os.osNumber;
         document.getElementById('input-motor').value = os.motor;
         document.getElementById('input-cliente').value = os.cliente;
         document.getElementById('input-prazo').value = os.deadline || '';
         document.getElementById('input-prioridade').checked = os.priority;
 
-        // Marca checkboxes das peças existentes
-        document.querySelectorAll('input[name="parts"]').forEach(cb => {
-            cb.checked = os.components && os.components.hasOwnProperty(cb.value);
+        // Limpa lista de peças
+        const partsContainer = document.getElementById('parts-selection');
+        partsContainer.innerHTML = '';
+
+        // Gera inputs de serviços para cada peça existente ou padrão
+        const allParts = ['Bloco', 'Cabeçote', 'Virabrequim', 'Bielas', 'Comando', 'Peças Diversas'];
+        
+        allParts.forEach(part => {
+            const isChecked = os.components && os.components[part];
+            const serviceNote = (os.services && os.services[part]) || '';
+            
+            const div = document.createElement('div');
+            div.className = `p-3 rounded-lg border ${isChecked ? 'border-blue-500/50 bg-blue-900/10' : 'border-slate-700 bg-slate-900'} transition-all`;
+            div.innerHTML = `
+                <label class="flex items-center gap-3 cursor-pointer mb-2">
+                    <input type="checkbox" name="parts" value="${part}" class="w-4 h-4 accent-blue-500" ${isChecked ? 'checked' : ''}>
+                    <span class="text-sm font-bold ${isChecked ? 'text-blue-300' : 'text-slate-400'}">${part}</span>
+                </label>
+                <input type="text" name="service-${part}" value="${serviceNote}" 
+                    class="w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs text-white focus:border-blue-500 outline-none placeholder-slate-600"
+                    placeholder="O que fazer? (Ex: Retífica 0.50)">
+            `;
+            partsContainer.appendChild(div);
         });
 
-        // UI Updates
-        const btn = document.getElementById('btn-submit');
-        btn.innerHTML = `Atualizar O.S.`;
-        btn.classList.replace('bg-blue-600', 'bg-orange-600');
-        btn.classList.replace('hover:bg-blue-500', 'hover:bg-orange-500');
+        // Toggle Aprovação
+        const statusContainer = document.getElementById('status-container');
+        if (statusContainer) {
+            statusContainer.innerHTML = `
+                <label class="flex items-center gap-3 p-3 rounded-lg border ${os.approved ? 'border-emerald-500 bg-emerald-900/20' : 'border-red-500 bg-red-900/20'} cursor-pointer transition-all">
+                    <input type="checkbox" id="input-approved" class="w-5 h-5 accent-emerald-500" ${os.approved ? 'checked' : ''}>
+                    <span class="font-bold ${os.approved ? 'text-emerald-400' : 'text-red-400'}">
+                        ${os.approved ? 'ORÇAMENTO APROVADO - LIBERADO' : 'AGUARDANDO APROVAÇÃO DO CLIENTE'}
+                    </span>
+                </label>
+            `;
+        }
 
-        // Botão Excluir (Adiciona se não existir)
+        const btn = document.getElementById('btn-submit');
+        btn.innerHTML = `Salvar Alterações`;
+        
+        // Botão Excluir
         let delBtn = document.getElementById('btn-delete-os');
         if(!delBtn) {
             delBtn = document.createElement('button');
             delBtn.id = 'btn-delete-os';
             delBtn.className = 'w-full mt-3 bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white font-bold py-3 rounded-xl border border-red-900/50 transition-colors flex items-center justify-center gap-2';
-            delBtn.innerHTML = `<i data-lucide="trash-2" class="w-4 h-4"></i> Excluir O.S. Permanentemente`;
+            delBtn.innerHTML = `<i data-lucide="trash-2" class="w-4 h-4"></i> Excluir O.S.`;
             delBtn.type = 'button';
             delBtn.onclick = () => deleteOS(id);
             document.getElementById('new-os-form').appendChild(delBtn);
@@ -159,20 +187,35 @@ function setupGlobalFunctions() {
 }
 
 function resetForm() {
-    document.getElementById('new-os-form').reset();
+    const form = document.getElementById('new-os-form');
+    form.reset();
     
-    // Reset Botão Submit
+    // Reset Peças
+    const partsContainer = document.getElementById('parts-selection');
+    partsContainer.innerHTML = ''; // Recria padrão no edit, ou vazio no create
+    // Recria padrão simples para New OS
+    const defaultParts = ['Bloco', 'Cabeçote', 'Virabrequim', 'Bielas', 'Comando', 'Peças Diversas'];
+    defaultParts.forEach(part => {
+        const div = document.createElement('div');
+        div.className = 'p-3 rounded-lg border border-slate-700 bg-slate-900';
+        div.innerHTML = `
+            <label class="flex items-center gap-3 cursor-pointer mb-2">
+                <input type="checkbox" name="parts" value="${part}" class="w-4 h-4 accent-blue-500" ${['Bloco','Cabeçote'].includes(part) ? 'checked' : ''}>
+                <span class="text-sm font-medium text-slate-300">${part}</span>
+            </label>
+            <input type="text" name="service-${part}" class="hidden w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs" placeholder="Serviço...">
+        `;
+        partsContainer.appendChild(div);
+    });
+
+    const statusContainer = document.getElementById('status-container');
+    if(statusContainer) statusContainer.innerHTML = ''; // Novo não tem status, nasce pendente
+
     const btn = document.getElementById('btn-submit');
-    btn.innerHTML = `Lançar Serviço no Sistema`;
-    btn.classList.remove('bg-orange-600', 'hover:bg-orange-500');
-    btn.classList.add('bg-blue-600', 'hover:bg-blue-500');
+    btn.innerHTML = `Lançar O.S. na Entrada`;
     
-    // Esconde Botão Excluir
     const delBtn = document.getElementById('btn-delete-os');
     if(delBtn) delBtn.classList.add('hidden');
-    
-    // Checkboxes padrão
-    document.querySelectorAll('input[name="parts"]').forEach(c => c.checked = ['Bloco','Cabeçote'].includes(c.value));
 }
 
 // --- RENDERIZAÇÃO ---
@@ -190,21 +233,25 @@ function renderMobileTabs() {
     
     nav.innerHTML = '';
     currentStages.forEach(stage => {
-        let partCount = 0;
+        // Contagem inteligente
+        let count = 0;
         workOrders.forEach(os => {
-            if (os.components) {
-                Object.values(os.components).forEach(compStage => {
-                    if (compStage === stage.id) partCount++;
-                });
+            if(stage.isGrouped) {
+                // Se o estágio é agrupado (Lavação/Orçamento), conta 1 por O.S. se tiver QUALQUER peça lá
+                const hasPartHere = os.components && Object.values(os.components).includes(stage.id);
+                if(hasPartHere) count++;
+            } else {
+                // Se é produção, conta as peças individuais
+                if(os.components) {
+                    Object.values(os.components).forEach(s => { if(s === stage.id) count++; });
+                }
             }
         });
 
         const isActive = activeStageMobile === stage.id;
-        
         const btn = document.createElement('button');
-        btn.className = `whitespace-nowrap px-4 py-1.5 rounded-full text-sm font-bold border transition-all flex-shrink-0 ${isActive ? 'bg-blue-600 text-white border-blue-600 shadow-lg shadow-blue-900/50' : 'bg-slate-800 text-slate-400 border-slate-700'}`;
-        btn.innerHTML = `${stage.label} <span class="ml-1 opacity-70 text-xs">${partCount}</span>`;
-        
+        btn.className = `whitespace-nowrap px-4 py-1.5 rounded-full text-sm font-bold border transition-all flex-shrink-0 ${isActive ? 'bg-blue-600 text-white border-blue-600 shadow-lg' : 'bg-slate-800 text-slate-400 border-slate-700'}`;
+        btn.innerHTML = `${stage.label} <span class="ml-1 opacity-70 text-xs">${count}</span>`;
         btn.onclick = () => {
             activeStageMobile = stage.id;
             renderApp();
@@ -225,23 +272,15 @@ function renderBoard() {
         if (isMobile && stage.id !== activeStageMobile) return;
 
         const column = document.createElement('div');
-        column.className = `flex-shrink-0 flex flex-col h-full ${isMobile ? 'w-full' : 'w-[340px] bg-slate-900/50 rounded-xl border border-slate-800'}`;
+        column.className = `flex-shrink-0 flex flex-col h-full ${isMobile ? 'w-full' : 'w-[350px] bg-slate-900/50 rounded-xl border border-slate-800'}`;
         
         if (!isMobile) {
-            let partCount = 0;
-            workOrders.forEach(os => {
-                if (os.components) {
-                    Object.values(os.components).forEach(s => { if (s === stage.id) partCount++; });
-                }
-            });
-
             column.innerHTML = `
                 <div class="p-3 border-b border-slate-800 flex justify-between items-center sticky top-0 bg-slate-900/90 backdrop-blur z-10 rounded-t-xl">
                     <div class="flex items-center gap-2">
                         <div class="w-2 h-2 rounded-full stage-dot ${stage.color} bg-current"></div>
                         <h3 class="font-bold text-slate-300 text-sm uppercase">${stage.label}</h3>
                     </div>
-                    <span class="bg-slate-800 text-slate-400 text-xs px-2 py-0.5 rounded-full font-mono border border-slate-700">${partCount}</span>
                 </div>
                 <div class="flex-1 overflow-y-auto p-2 space-y-3 custom-scrollbar list-container"></div>
             `;
@@ -251,16 +290,28 @@ function renderBoard() {
 
         const list = column.querySelector('.list-container');
         let hasItems = false;
-        
-        workOrders.forEach(os => {
-            if (!os.components) return;
-            Object.entries(os.components).forEach(([partName, partStage]) => {
-                if (partStage === stage.id) {
-                    list.appendChild(createPartCard(os, partName, stage.id));
-                    hasItems = true;
-                }
+
+        // LÓGICA DE RENDERIZAÇÃO MISTA (AGRUPADO VS PEÇAS)
+        if (stage.isGrouped) {
+            // Estágios de Gestão (Lavação/Orçamento): Mostra 1 Card por O.S.
+            const relevantOS = workOrders.filter(os => os.components && Object.values(os.components).includes(stage.id));
+            
+            relevantOS.forEach(os => {
+                list.appendChild(createGroupedCard(os, stage.id));
+                hasItems = true;
             });
-        });
+        } else {
+            // Estágios de Produção (Metrologia, etc): Mostra Peças Individuais
+            workOrders.forEach(os => {
+                if (!os.components) return;
+                Object.entries(os.components).forEach(([partName, partStage]) => {
+                    if (partStage === stage.id) {
+                        list.appendChild(createPartCard(os, partName, stage.id));
+                        hasItems = true;
+                    }
+                });
+            });
+        }
 
         if (!hasItems) {
             list.innerHTML = `
@@ -275,48 +326,94 @@ function renderBoard() {
     if(window.lucide) window.lucide.createIcons();
 }
 
-function createPartCard(os, partName, currentStageId) {
+// --- CARD: AGRUPADO (Lavação/Orçamento) ---
+function createGroupedCard(os, stageId) {
     const el = document.createElement('div');
     const deadlineStatus = getDeadlineStatus(os.deadlineDate);
     
     let borderClass = 'border-slate-700';
-    if (os.priority) borderClass = 'border-red-500/50 shadow-[0_0_15px_-3px_rgba(239,68,68,0.2)]';
-    else if (deadlineStatus === 'late') borderClass = 'border-red-900';
+    if(stageId === 'orcamento') {
+        borderClass = os.approved ? 'border-emerald-500 shadow-[0_0_15px_-3px_rgba(16,185,129,0.2)]' : 'border-red-500 shadow-[0_0_15px_-3px_rgba(239,68,68,0.2)]';
+    }
 
+    // Lista de peças que estão NESTE estágio
+    const partsHere = Object.entries(os.components)
+        .filter(([_, st]) => st === stageId)
+        .map(([name]) => name);
+
+    el.className = `relative p-4 rounded-lg border-l-4 ${borderClass} bg-slate-800 transition-all active:scale-[0.98] group`;
+    
+    el.innerHTML = `
+        <div class="flex justify-between items-start mb-3">
+            <span class="font-mono text-xs font-bold text-slate-400 bg-slate-950 px-2 py-1 rounded cursor-pointer hover:text-white" onclick="editOS('${os.id}')">
+                <i data-lucide="edit-2" class="w-3 h-3 inline mr-1"></i>#${os.osNumber}
+            </span>
+            ${stageId === 'orcamento' ? 
+                (os.approved ? '<span class="text-[10px] font-bold bg-emerald-900/30 text-emerald-400 px-2 py-1 rounded border border-emerald-800">APROVADO</span>' 
+                             : '<span class="text-[10px] font-bold bg-red-900/30 text-red-400 px-2 py-1 rounded border border-red-800 animate-pulse">AGUARDANDO</span>') 
+                : ''}
+        </div>
+        
+        <h4 class="text-white font-bold text-lg leading-tight mb-1">${os.motor}</h4>
+        <p class="text-slate-400 text-xs uppercase font-semibold mb-3 tracking-wide">${os.cliente}</p>
+
+        <!-- Lista de Peças no Card -->
+        <div class="space-y-1 mb-4">
+            ${partsHere.map(p => `
+                <div class="flex justify-between items-center text-xs text-slate-300 bg-slate-900/50 px-2 py-1 rounded">
+                    <span>${p}</span>
+                    <span class="text-slate-500 italic truncate max-w-[100px]">${(os.services && os.services[p]) || ''}</span>
+                </div>
+            `).join('')}
+        </div>
+
+        <div class="flex gap-2">
+            ${stageId === 'orcamento' && !os.approved ? 
+                `<button onclick="editOS('${os.id}')" class="w-full bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white border border-red-900 py-2 rounded font-bold text-xs transition-colors">
+                    <i data-lucide="file-signature" class="w-3 h-3 inline mr-1"></i> ANALISAR / APROVAR
+                </button>` :
+                `<button onclick="advanceGroup('${os.id}', '${stageId}')" class="w-full bg-blue-600 hover:bg-blue-500 text-white py-2 rounded font-bold text-xs shadow-lg shadow-blue-900/20 transition-colors flex justify-center items-center gap-2">
+                    Avançar Todos <i data-lucide="arrow-right-circle" class="w-4 h-4"></i>
+                </button>`
+            }
+        </div>
+    `;
+    return el;
+}
+
+// --- CARD: PEÇA INDIVIDUAL (Produção) ---
+function createPartCard(os, partName, currentStageId) {
+    const el = document.createElement('div');
+    const deadlineStatus = getDeadlineStatus(os.deadlineDate);
+    
+    // Serviço Específico
+    const serviceNote = (os.services && os.services[partName]) || 'Serviço Padrão';
+    
     const stageIdx = currentStages.findIndex(s => s.id === currentStageId);
     const hasNext = stageIdx < currentStages.length - 1;
 
-    el.className = `part-card relative p-3 rounded-lg border-l-4 ${borderClass} bg-slate-800 transition-all active:scale-[0.98] group`;
+    el.className = `part-card relative p-3 rounded-lg border-l-4 border-slate-700 bg-slate-800 transition-all active:scale-[0.98] group`;
     
     el.innerHTML = `
         <div class="flex justify-between items-start mb-2">
-            <div class="flex items-center gap-2">
-                <span class="font-mono text-[10px] font-bold text-slate-500 bg-slate-950 px-1.5 py-0.5 rounded cursor-pointer hover:text-blue-400 hover:bg-slate-900 transition-colors" onclick="editOS('${os.id}')" title="Editar OS">
-                    <i data-lucide="edit-2" class="w-3 h-3 inline mr-1"></i>#${os.osNumber}
-                </span>
-            </div>
+            <span class="text-[10px] font-bold text-slate-500 hover:text-white cursor-pointer" onclick="editOS('${os.id}')">#${os.osNumber}</span>
             <span class="part-badge" data-type="${partName}">${partName}</span>
         </div>
         
-        <div class="mb-3">
+        <div class="mb-2">
             <h4 class="text-white font-bold text-sm leading-tight truncate">${os.motor}</h4>
-            <p class="text-slate-400 text-[10px] uppercase font-semibold truncate">${os.cliente}</p>
+            <div class="text-blue-400 text-[10px] font-mono mt-1 bg-blue-900/10 p-1 rounded border border-blue-900/30 truncate">
+                ${serviceNote}
+            </div>
         </div>
 
-        <div class="flex items-center gap-2 mb-3">
-            ${deadlineStatus === 'late' ? 
-                `<div class="text-[10px] text-red-400 font-bold flex items-center gap-1 bg-red-900/20 px-1.5 py-0.5 rounded"><i data-lucide="alert-circle" class="w-3 h-3"></i> Atrasado</div>` : 
-                `<div class="text-[10px] text-slate-500 flex items-center gap-1"><i data-lucide="clock" class="w-3 h-3"></i> ${os.deadlineDate ? os.deadlineDate.toLocaleDateString('pt-BR') : 's/d'}</div>`
-            }
-        </div>
-
-        <div class="flex items-center gap-2">
+        <div class="flex items-center gap-2 mt-3">
             ${hasNext ? `
-                <button class="btn-move flex-1 bg-blue-600 hover:bg-blue-500 text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1 transition-colors">
-                    Avançar <i data-lucide="arrow-right" class="w-3 h-3"></i>
+                <button class="btn-move flex-1 bg-slate-700 hover:bg-blue-600 text-slate-300 hover:text-white py-1.5 rounded text-xs font-bold transition-colors flex justify-center gap-1">
+                    Próx <i data-lucide="arrow-right" class="w-3 h-3"></i>
                 </button>
             ` : `
-                <button class="btn-finish flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1 transition-colors">
+                <button class="btn-finish flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-1.5 rounded text-xs font-bold flex justify-center gap-1">
                     Pronto <i data-lucide="check" class="w-3 h-3"></i>
                 </button>
             `}
@@ -324,16 +421,9 @@ function createPartCard(os, partName, currentStageId) {
     `;
 
     if(hasNext) {
-        // Correção de escopo no onclick
-        el.querySelector('.btn-move').onclick = (e) => {
-            e.stopPropagation();
-            movePart(os, partName, currentStages[stageIdx + 1].id);
-        };
+        el.querySelector('.btn-move').onclick = (e) => { e.stopPropagation(); movePart(os, partName, currentStages[stageIdx + 1].id); };
     } else {
-        el.querySelector('.btn-finish').onclick = (e) => {
-            e.stopPropagation();
-            finishPart(os, partName);
-        };
+        el.querySelector('.btn-finish').onclick = (e) => { e.stopPropagation(); finishPart(os, partName); };
     }
 
     return el;
@@ -345,7 +435,7 @@ async function handleOSSubmit(e) {
     e.preventDefault();
     const btn = document.getElementById('btn-submit');
     const originalText = btn.innerHTML;
-    btn.innerHTML = `<i data-lucide="loader-2" class="animate-spin w-4 h-4"></i> Processando...`;
+    btn.innerHTML = `<i data-lucide="loader-2" class="animate-spin w-4 h-4"></i>`;
     btn.disabled = true;
 
     try {
@@ -358,45 +448,55 @@ async function handleOSSubmit(e) {
             timestamp: serverTimestamp()
         };
 
-        const checkboxes = document.querySelectorAll('input[name="parts"]:checked');
+        // Captura serviços e peças
+        const partsInputs = document.querySelectorAll('input[name="parts"]:checked');
         const componentsMap = {};
+        const servicesMap = {};
         
-        // Se estiver editando, precisamos preservar o status das peças existentes
+        // Determina estágio inicial/atual
+        let currentComponents = {};
         if (editingId) {
-            const existingOS = workOrders.find(o => o.id === editingId);
-            // Mantém as peças antigas com seus status atuais se ainda estiverem marcadas
-            checkboxes.forEach(cb => {
-                if (existingOS.components && existingOS.components[cb.value]) {
-                    componentsMap[cb.value] = existingOS.components[cb.value];
-                } else {
-                    componentsMap[cb.value] = currentStages[0].id; // Nova peça entra no início
-                }
-            });
-
-            await updateDoc(doc(db, COLLECTION_NAME, editingId), {
-                ...osData,
-                components: componentsMap
-            });
-            showToast("O.S. Atualizada!");
-
-        } else {
-            // Criação
-            const initialStage = currentStages[0].id;
-            checkboxes.forEach(cb => componentsMap[cb.value] = initialStage);
-            
-            if (Object.keys(componentsMap).length === 0) throw new Error("Selecione peças!");
-
-            await addDoc(collection(db, COLLECTION_NAME), {
-                ...osData,
-                components: componentsMap
-            });
-            showToast("O.S. Criada!");
+            const oldOS = workOrders.find(o => o.id === editingId);
+            currentComponents = oldOS.components || {};
         }
 
+        partsInputs.forEach(cb => {
+            const part = cb.value;
+            // Se já existe, mantém o estágio. Se é novo, vai para Lavação (Estágio 0)
+            componentsMap[part] = currentComponents[part] || currentStages[0].id;
+            
+            // Captura o serviço escrito
+            const serviceInput = document.querySelector(`input[name="service-${part}"]`);
+            if(serviceInput && serviceInput.value) servicesMap[part] = serviceInput.value;
+        });
+
+        // Captura Aprovação (só se estiver editando e o campo existir)
+        const approvedInput = document.getElementById('input-approved');
+        const isApproved = approvedInput ? approvedInput.checked : false;
+
+        if (Object.keys(componentsMap).length === 0) throw new Error("Selecione peças!");
+
+        if (editingId) {
+            await updateDoc(doc(db, COLLECTION_NAME, editingId), {
+                ...osData,
+                components: componentsMap,
+                services: servicesMap,
+                approved: isApproved
+            });
+            showToast("Atualizado!");
+        } else {
+            await addDoc(collection(db, COLLECTION_NAME), {
+                ...osData,
+                components: componentsMap,
+                services: servicesMap,
+                approved: false // Nasce não aprovado
+            });
+            showToast("O.S. Criada na Lavação!");
+        }
         window.closeModal();
     } catch (err) {
         console.error(err);
-        alert(err.message || "Erro ao salvar");
+        alert(err.message);
     } finally {
         btn.innerHTML = originalText;
         btn.disabled = false;
@@ -404,13 +504,33 @@ async function handleOSSubmit(e) {
     }
 }
 
-async function deleteOS(id) {
-    if(!confirm("TEM CERTEZA? Isso apagará todo o histórico dessa O.S.")) return;
+// Avança TODOS os componentes de um estágio para o próximo (Para Lavação -> Orçamento)
+window.advanceGroup = async (osId, currentStageId) => {
     try {
-        await deleteDoc(doc(db, COLLECTION_NAME, id));
-        window.closeModal();
-        showToast("O.S. Excluída", "error");
-    } catch(e) { console.error(e); alert("Erro ao excluir"); }
+        const os = workOrders.find(o => o.id === osId);
+        if(!os) return;
+
+        // Descobre o próximo estágio
+        const idx = currentStages.findIndex(s => s.id === currentStageId);
+        const nextStage = currentStages[idx + 1].id;
+
+        // Move APENAS as peças que estão no estágio atual
+        const newComponents = { ...os.components };
+        Object.keys(newComponents).forEach(key => {
+            if(newComponents[key] === currentStageId) {
+                newComponents[key] = nextStage;
+            }
+        });
+
+        await updateDoc(doc(db, COLLECTION_NAME, osId), { components: newComponents });
+        showToast("Avançado para " + currentStages[idx + 1].label);
+    } catch(e) { console.error(e); }
+};
+
+async function deleteOS(id) {
+    if(!confirm("Apagar O.S. permanentemente?")) return;
+    try { await deleteDoc(doc(db, COLLECTION_NAME, id)); window.closeModal(); showToast("Apagado", "error"); }
+    catch(e) { console.error(e); }
 }
 
 async function movePart(os, partName, nextStageId) {
@@ -419,7 +539,7 @@ async function movePart(os, partName, nextStageId) {
         const newComponents = { ...os.components };
         newComponents[partName] = nextStageId;
         await updateDoc(osRef, { components: newComponents });
-    } catch(e) { console.error(e); showToast("Erro ao mover", "error"); }
+    } catch(e) { console.error(e); }
 }
 
 async function finishPart(os, partName) {
@@ -428,23 +548,16 @@ async function finishPart(os, partName) {
         const osRef = doc(db, COLLECTION_NAME, os.id);
         const newComponents = { ...os.components };
         delete newComponents[partName];
-
-        if (Object.keys(newComponents).length === 0) {
-            await deleteDoc(osRef);
-            showToast(`O.S. #${os.osNumber} Concluída!`);
-        } else {
-            await updateDoc(osRef, { components: newComponents });
-            showToast(`${partName} pronto!`);
-        }
+        if (Object.keys(newComponents).length === 0) await deleteDoc(osRef);
+        else await updateDoc(osRef, { components: newComponents });
+        showToast(`${partName} Concluído!`);
     } catch(e) { console.error(e); }
 }
 
 // --- UTILS ---
 function getDeadlineStatus(date) {
     if(!date) return 'ok';
-    const diff = date - new Date();
-    if(diff < 0) return 'late';
-    return 'ok';
+    return (date - new Date() < 0) ? 'late' : 'ok';
 }
 
 function showToast(msg, type='success') {
@@ -452,27 +565,31 @@ function showToast(msg, type='success') {
     if(!t) return;
     document.getElementById('toast-msg').innerText = msg;
     const icon = t.querySelector('i');
-    if(type==='error') {
-        t.classList.replace('border-slate-600', 'border-red-500');
-        icon.setAttribute('data-lucide', 'alert-circle');
-        icon.classList.add('text-red-500');
-    } else {
-        t.classList.replace('border-red-500', 'border-slate-600');
-        icon.setAttribute('data-lucide', 'check-circle');
-        icon.classList.replace('text-red-500', 'text-emerald-400');
+    
+    // Safety check para ícone
+    if(icon) {
+        if(type==='error') {
+            t.classList.replace('border-slate-600', 'border-red-500');
+            icon.setAttribute('data-lucide', 'alert-circle');
+            icon.classList.add('text-red-500');
+        } else {
+            t.classList.replace('border-red-500', 'border-slate-600');
+            icon.setAttribute('data-lucide', 'check-circle');
+            icon.classList.replace('text-red-500', 'text-emerald-400');
+        }
     }
+    
     t.classList.remove('translate-y-[-150%]');
     setTimeout(() => t.classList.add('translate-y-[-150%]'), 3000);
     if(window.lucide) window.lucide.createIcons();
 }
 
+// UI SETUP
 function setupUI() {
     document.getElementById('fab-new-os').onclick = window.openModal;
     document.getElementById('new-os-form').onsubmit = handleOSSubmit;
     document.getElementById('view-board').onclick = () => { document.getElementById('calendar-view').classList.add('translate-x-full'); renderBoard(); };
     document.getElementById('view-calendar').onclick = () => { document.getElementById('calendar-view').classList.remove('translate-x-full'); renderCalendar(); };
-    
-    // Calendar Nav
     document.getElementById('cal-prev').onclick = () => { currentMonth.setMonth(currentMonth.getMonth()-1); renderCalendar(); };
     document.getElementById('cal-next').onclick = () => { currentMonth.setMonth(currentMonth.getMonth()+1); renderCalendar(); };
 }
@@ -486,14 +603,11 @@ function renderCalendar() {
     const firstDay = new Date(year, month, 1);
     const lastDay = new Date(year, month + 1, 0);
     document.getElementById('calendar-month-title').innerText = firstDay.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
-
     for(let i=0; i<firstDay.getDay(); i++) grid.innerHTML += `<div></div>`;
-
     for(let i=1; i<=lastDay.getDate(); i++) {
         const div = document.createElement('div');
         div.className = 'calendar-day p-1';
         div.innerHTML = `<div class="text-[10px] text-slate-500 font-bold mb-1">${i}</div>`;
-        
         workOrders.forEach(os => {
              if(os.deadlineDate && os.deadlineDate.getDate()===i && os.deadlineDate.getMonth()===month) {
                  div.innerHTML += `<div class="cal-event bg-blue-900/40 text-blue-200 border border-blue-800 cursor-pointer" onclick="editOS('${os.id}')">#${os.osNumber}</div>`;
