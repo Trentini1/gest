@@ -15,7 +15,7 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
-const COLLECTION_NAME = "servicos_retifica_v5";
+const COLLECTION_NAME = "servicos_retifica_v6"; // V6: Limpa dados antigos e reseta ordem
 
 // --- ROTEAMENTO E SERVIÇOS ---
 const PART_ROUTING = {
@@ -27,6 +27,7 @@ const PART_ROUTING = {
     "Peças Diversas": "bielas"
 };
 
+// Baseado no seu PDF (CamScanner)
 const SERVICE_CATALOG = {
     "Cabeçote": [ "Plaina", "Sede Válvulas", "Ret. Válvulas", "Trocar Guias", "Trocar Sedes", "Teste Trinca", "Costura", "Camisa Bico", "Regular", "Montagem", "Jato" ],
     "Bloco": [ "Banho Químico", "Teste Trinca", "Plaina Face", "Ret. Cilindro", "Brunir", "Encamisar", "Ret. Mancal", "Bucha Comando", "Troca Selos", "Projeção" ],
@@ -38,13 +39,12 @@ const SERVICE_CATALOG = {
 
 // --- ESTADO GLOBAL ---
 let workOrders = [];
-let currentMonth = new Date();
 let activeStageMobile = null;
 let editingId = null;
-let currentView = 'board'; // 'board', 'dashboard', 'calendar'
+let currentView = 'board'; 
 let resizeTimeout;
 
-// ORDEM CORRIGIDA: Metrologia ANTES de Montagem
+// ORDEM V6
 const DEFAULT_STAGES = [
     { id: 'lavacao', label: 'Lavação', color: 'text-blue-400', isGrouped: true },
     { id: 'orcamento', label: 'Inspeção', color: 'text-red-400', isGrouped: true },
@@ -52,12 +52,13 @@ const DEFAULT_STAGES = [
     { id: 'bloco', label: 'Bloco', color: 'text-orange-400', isGrouped: false },
     { id: 'virabrequim', label: 'Virabrequim', color: 'text-indigo-400', isGrouped: false },
     { id: 'bielas', label: 'Bielas', color: 'text-pink-400', isGrouped: false },
-    { id: 'metrologia', label: 'Metrologia', color: 'text-yellow-400', isGrouped: false }, // Agora antes
+    { id: 'metrologia', label: 'Metrologia', color: 'text-yellow-400', isGrouped: false }, 
     { id: 'montagem', label: 'Montagem', color: 'text-emerald-400', isGrouped: false },
 ];
 
-let currentStages = JSON.parse(localStorage.getItem('retifica_stages_order_v6')) || DEFAULT_STAGES;
-if(currentStages.length < DEFAULT_STAGES.length) currentStages = DEFAULT_STAGES; // Safety check
+let currentStages = JSON.parse(localStorage.getItem('retifica_stages_order_v7')) || DEFAULT_STAGES;
+// Reset forçado se a versão for antiga
+if(currentStages.length < DEFAULT_STAGES.length) currentStages = DEFAULT_STAGES; 
 if(!activeStageMobile && currentStages.length > 0) activeStageMobile = currentStages[0].id;
 
 // --- INICIALIZAÇÃO ---
@@ -74,7 +75,7 @@ function init() {
         }));
         renderApp();
     }, (err) => {
-        console.error(err);
+        console.error("Erro Firebase:", err);
         showToast("Erro de conexão", "error");
     });
 
@@ -96,17 +97,17 @@ function renderApp() {
     }
 }
 
-// --- DASHBOARD (NOVA FUNCIONALIDADE) ---
+// --- DASHBOARD ---
 function renderDashboard() {
     const container = document.getElementById('dashboard-view');
     if (!container) return;
 
-    // Estatísticas
     const totalOS = workOrders.length;
+    // Conta quantas peças estão esperando aprovação no orçamento
     const waitingApproval = workOrders.filter(o => o.components && Object.values(o.components).includes('orcamento') && !o.approved).length;
     const delayed = workOrders.filter(o => getDeadlineStatus(o.deadlineDate) === 'late').length;
     
-    // Contagem por setor
+    // Contagem por setor (GPS)
     const sectorCounts = {};
     currentStages.forEach(s => sectorCounts[s.id] = 0);
     workOrders.forEach(o => {
@@ -115,16 +116,14 @@ function renderDashboard() {
         });
     });
 
-    // Peças em Produção (exclui lavação, orçamento e entregues)
     const productionCount = Object.entries(sectorCounts).reduce((acc, [key, val]) => {
         return (key !== 'lavacao' && key !== 'orcamento') ? acc + val : acc;
     }, 0);
 
     container.innerHTML = `
         <div class="max-w-5xl mx-auto space-y-6">
-            <h2 class="text-2xl font-bold text-white mb-4">Visão Geral da Oficina</h2>
+            <h2 class="text-2xl font-bold text-white mb-4">Painel de Controle</h2>
             
-            <!-- Cards KPI -->
             <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div class="bg-slate-800 p-4 rounded-xl border border-slate-700">
                     <p class="text-xs text-slate-400 uppercase font-bold">Total O.S.</p>
@@ -135,23 +134,22 @@ function renderDashboard() {
                     <p class="text-3xl font-bold text-red-500 mt-1">${delayed}</p>
                 </div>
                 <div class="bg-slate-800 p-4 rounded-xl border border-yellow-900/30">
-                    <p class="text-xs text-yellow-400 uppercase font-bold">Aprovação</p>
+                    <p class="text-xs text-yellow-400 uppercase font-bold">Aprovar</p>
                     <p class="text-3xl font-bold text-yellow-500 mt-1">${waitingApproval}</p>
                 </div>
                 <div class="bg-slate-800 p-4 rounded-xl border border-blue-900/30">
-                    <p class="text-xs text-blue-400 uppercase font-bold">Em Produção</p>
+                    <p class="text-xs text-blue-400 uppercase font-bold">Produção</p>
                     <p class="text-3xl font-bold text-blue-500 mt-1">${productionCount} <span class="text-xs text-slate-500 font-normal">peças</span></p>
                 </div>
             </div>
 
-            <!-- Gráfico de Setores (Barras CSS) -->
             <div class="bg-slate-800 p-5 rounded-xl border border-slate-700">
-                <h3 class="text-sm font-bold text-slate-300 mb-4 uppercase">Distribuição por Setor</h3>
+                <h3 class="text-sm font-bold text-slate-300 mb-4 uppercase">Carga por Setor</h3>
                 <div class="space-y-3">
                     ${currentStages.map(stage => {
                         const count = sectorCounts[stage.id];
-                        const percentage = totalOS > 0 ? (count / (totalOS * 2)) * 100 : 0; // Estimativa visual
-                        const width = Math.min(percentage * 5, 100); // Scale up a bit
+                        const percentage = totalOS > 0 ? (count / (totalOS * 2)) * 100 : 0; 
+                        const width = Math.min(percentage * 5, 100); 
                         return `
                             <div class="flex items-center gap-3">
                                 <div class="w-24 text-xs font-bold ${stage.color} text-right shrink-0">${stage.label}</div>
@@ -164,35 +162,14 @@ function renderDashboard() {
                     }).join('')}
                 </div>
             </div>
-
-            <!-- Lista de Prioridades -->
-            <div class="bg-slate-800 p-5 rounded-xl border border-slate-700">
-                <h3 class="text-sm font-bold text-red-400 mb-4 uppercase flex items-center gap-2"><i data-lucide="alert-circle" class="w-4 h-4"></i> Atenção Imediata</h3>
-                <div class="space-y-2">
-                    ${workOrders.filter(o => o.priority || getDeadlineStatus(o.deadlineDate) === 'late').length === 0 ? 
-                        '<p class="text-slate-500 text-xs italic">Nenhuma urgência no momento.</p>' : 
-                        workOrders.filter(o => o.priority || getDeadlineStatus(o.deadlineDate) === 'late')
-                        .sort((a,b) => (a.deadlineDate || 0) - (b.deadlineDate || 0))
-                        .slice(0, 5) // Top 5
-                        .map(o => `
-                            <div class="flex items-center justify-between p-2 bg-slate-900/50 rounded border-l-2 ${o.priority ? 'border-red-500' : 'border-orange-500'}">
-                                <div>
-                                    <p class="font-bold text-xs text-slate-200">#${o.osNumber} - ${o.motor}</p>
-                                    <p class="text-[10px] text-slate-500">${o.cliente}</p>
-                                </div>
-                                <button onclick="editOS('${o.id}')" class="text-xs bg-slate-800 px-2 py-1 rounded text-slate-300 hover:text-white border border-slate-700">Ver</button>
-                            </div>
-                        `).join('')
-                    }
-                </div>
-            </div>
         </div>
     `;
 }
 
-// --- FUNÇÕES DE LAYOUT DO MODAL (CLEAN MOBILE) ---
-function renderServiceChecklist(os, partsContainer) {
+// --- FUNÇÃO CORE: CHECKLIST INTELIGENTE (USADA NO NOVO E NO EDITAR) ---
+function renderServiceChecklist(os = {}, partsContainer) {
     Object.keys(SERVICE_CATALOG).forEach(part => {
+        // Se for novo (os vazio), isChecked é false. Se for edit, verifica.
         const isChecked = os.components && os.components[part];
         const savedServices = (os.services && os.services[part]) 
             ? (Array.isArray(os.services[part]) ? os.services[part] : [os.services[part]]) 
@@ -202,14 +179,13 @@ function renderServiceChecklist(os, partsContainer) {
 
         // Container da Peça
         const wrapper = document.createElement('div');
-        // Estilo: Se marcado, borda azul e fundo leve. Se não, escuro.
         wrapper.className = `rounded-xl border transition-all duration-200 overflow-hidden ${isChecked ? 'border-blue-500/40 bg-blue-950/10' : 'border-slate-800 bg-slate-900/40 opacity-70 hover:opacity-100'}`;
 
         // Header (Nome da Peça + Toggle)
         const header = document.createElement('div');
         header.className = "flex items-center gap-3 p-3 cursor-pointer select-none";
+        // Toggle ao clicar na barra inteira
         header.onclick = (e) => {
-            // Toggle manual do checkbox principal se clicar no header
             if (e.target.type !== 'checkbox') {
                 const cb = header.querySelector('input[type="checkbox"]');
                 cb.checked = !cb.checked;
@@ -223,11 +199,11 @@ function renderServiceChecklist(os, partsContainer) {
             ${pendencyReason ? '<i data-lucide="alert-triangle" class="w-4 h-4 text-red-500 animate-pulse"></i>' : ''}
         `;
 
-        // Conteúdo (Serviços) - Inicialmente escondido se não marcado
+        // Conteúdo (Serviços)
         const content = document.createElement('div');
         content.className = `content-area p-3 pt-0 border-t border-blue-500/20 ${isChecked ? '' : 'hidden'}`;
         
-        // Grid de Serviços (2 colunas no mobile para economizar espaço)
+        // Grid de Serviços (2 colunas)
         const servicesGrid = document.createElement('div');
         servicesGrid.className = "grid grid-cols-2 gap-2 mt-2";
         
@@ -271,11 +247,10 @@ function renderServiceChecklist(os, partsContainer) {
     });
 }
 
-// Função auxiliar global para o toggle do layout
+// Helper Global
 window.toggleContent = (wrapper, isChecked) => {
     const content = wrapper.querySelector('.content-area');
     const title = wrapper.querySelector('span');
-    
     if (isChecked) {
         content.classList.remove('hidden');
         wrapper.classList.remove('opacity-70', 'border-slate-800', 'bg-slate-900/40');
@@ -289,7 +264,7 @@ window.toggleContent = (wrapper, isChecked) => {
     }
 };
 
-// --- ROTEAMENTO E LÓGICA DE PLACAS ---
+// --- RENDER BOARD ---
 function renderBoard() {
     const container = document.getElementById('board-view');
     if (!container) return;
@@ -339,131 +314,13 @@ function renderBoard() {
         }
 
         if (!hasItems) {
-            list.innerHTML = `
-                <div class="flex flex-col items-center justify-center h-40 text-slate-700">
-                    <i data-lucide="inbox" class="w-8 h-8 mb-2 opacity-50"></i>
-                    <p class="text-xs font-medium">Vazio</p>
-                </div>
-            `;
+            list.innerHTML = `<div class="flex flex-col items-center justify-center h-40 text-slate-700"><i data-lucide="inbox" class="w-8 h-8 mb-2 opacity-50"></i><p class="text-xs font-medium">Vazio</p></div>`;
         }
         container.appendChild(column);
     });
     if(window.lucide) window.lucide.createIcons();
 }
 
-// --- OUTRAS FUNÇÕES GLOBAIS DE SETUP ---
-function setupGlobalFunctions() {
-    window.openSettings = () => {
-        const modal = document.getElementById('modal-settings');
-        const list = document.getElementById('settings-list');
-        if(!modal || !list) return;
-        list.innerHTML = '';
-        currentStages.forEach((stage, idx) => {
-            const item = document.createElement('div');
-            item.className = 'flex items-center justify-between bg-slate-700 p-3 rounded mb-2 border border-slate-600';
-            item.innerHTML = `
-                <span class="text-sm font-bold text-white">${stage.label}</span>
-                <div class="flex gap-1">
-                    <button onclick="moveOrder(${idx}, -1)" class="p-1 hover:bg-slate-600 rounded opacity-70 hover:opacity-100"><i data-lucide="arrow-up" class="w-4 h-4"></i></button>
-                    <button onclick="moveOrder(${idx}, 1)" class="p-1 hover:bg-slate-600 rounded opacity-70 hover:opacity-100"><i data-lucide="arrow-down" class="w-4 h-4"></i></button>
-                </div>
-            `;
-            list.appendChild(item);
-        });
-        modal.classList.remove('hidden');
-        if(window.lucide) window.lucide.createIcons();
-    };
-
-    window.moveOrder = (idx, dir) => {
-        if ((idx === 0 && dir === -1) || (idx === currentStages.length-1 && dir === 1)) return;
-        const temp = currentStages[idx];
-        currentStages[idx] = currentStages[idx + dir];
-        currentStages[idx + dir] = temp;
-        window.openSettings(); 
-    };
-
-    window.closeSettings = () => {
-        localStorage.setItem('retifica_stages_order_v6', JSON.stringify(currentStages));
-        document.getElementById('modal-settings').classList.add('hidden');
-        renderApp();
-        showToast("Ordem salva!");
-    };
-
-    window.resetSettings = () => {
-        localStorage.removeItem('retifica_stages_order_v6');
-        currentStages = DEFAULT_STAGES;
-        window.openSettings();
-    };
-
-    window.openModal = () => {
-        editingId = null;
-        resetForm();
-        document.getElementById('modal').classList.remove('hidden');
-    };
-
-    window.closeModal = () => {
-        document.getElementById('modal').classList.add('hidden');
-        resetForm();
-    };
-
-    window.approveOS = async (id) => {
-        if(!confirm("Aprovar orçamento? Isso distribuirá as peças.")) return;
-        try {
-            await updateDoc(doc(db, COLLECTION_NAME, id), { approved: true });
-            showToast("✅ Aprovado!");
-        } catch(e) { console.error(e); }
-    };
-
-    window.editOS = (id) => {
-        const os = workOrders.find(o => o.id === id);
-        if(!os) return;
-
-        editingId = id;
-        document.getElementById('input-os-num').value = os.osNumber;
-        document.getElementById('input-motor').value = os.motor;
-        document.getElementById('input-cliente').value = os.cliente;
-        document.getElementById('input-prazo').value = os.deadline || '';
-        document.getElementById('input-prioridade').checked = os.priority;
-
-        const partsContainer = document.getElementById('parts-selection');
-        partsContainer.innerHTML = '';
-        renderServiceChecklist(os, partsContainer);
-
-        const btn = document.getElementById('btn-submit');
-        btn.innerHTML = `Salvar Alterações`;
-        
-        let delBtn = document.getElementById('btn-delete-os');
-        if(!delBtn) {
-            delBtn = document.createElement('button');
-            delBtn.id = 'btn-delete-os';
-            delBtn.className = 'w-full bg-red-600/10 hover:bg-red-600 text-red-400 hover:text-white font-bold py-3 rounded-xl border border-red-900/50 transition-colors flex items-center justify-center gap-2 text-sm';
-            delBtn.innerHTML = `<i data-lucide="trash-2" class="w-4 h-4"></i> Excluir O.S.`;
-            delBtn.type = 'button';
-            delBtn.onclick = () => deleteOS(id);
-            document.getElementById('new-os-form').appendChild(delBtn);
-        } else {
-            delBtn.onclick = () => deleteOS(id);
-            delBtn.classList.remove('hidden');
-        }
-
-        document.getElementById('modal').classList.remove('hidden');
-        if(window.lucide) window.lucide.createIcons();
-    };
-
-    window.resolvePendency = async (osId, partName) => {
-        if(!confirm(`Liberar ${partName}?`)) return;
-        try {
-            const os = workOrders.find(o => o.id === osId);
-            const newPendencies = { ...os.pendencies };
-            delete newPendencies[partName];
-            await updateDoc(doc(db, COLLECTION_NAME, osId), { pendencies: newPendencies });
-            showToast("Pendência resolvida!");
-        } catch(e) { console.error(e); }
-    };
-}
-
-// --- MÉTODOS DE RENDERIZAÇÃO DE CARD (MANTIDOS E OTIMIZADOS) ---
-// (Resumido pois a lógica principal não mudou, apenas layout)
 function createGroupedCard(os, stageId) {
     const el = document.createElement('div');
     let borderClass = stageId === 'orcamento' ? (os.approved ? 'border-emerald-500' : 'border-red-500') : 'border-slate-700';
@@ -474,7 +331,6 @@ function createGroupedCard(os, stageId) {
 
     el.className = `relative p-4 rounded-lg border-l-4 ${borderClass} bg-slate-800 transition-all active:scale-[0.99] group shadow-sm`;
     
-    // Lista de peças compacta
     const servicesListHTML = partsHere.map(p => {
         const servs = os.services && os.services[p];
         const isPending = os.pendencies && os.pendencies[p];
@@ -557,59 +413,132 @@ function createPartCard(os, partName, currentStageId) {
     return el;
 }
 
-// --- UI SETUP & NAVIGATION ---
-function setupUI() {
-    document.getElementById('fab-new-os').onclick = window.openModal;
-    document.getElementById('new-os-form').onsubmit = handleOSSubmit;
-    
-    // View Switcher
-    const setView = (view) => {
-        currentView = view;
-        const board = document.getElementById('board-view');
-        const dash = document.getElementById('dashboard-view');
-        const cal = document.getElementById('calendar-view');
-        const mobTabs = document.getElementById('mobile-tabs');
-        const btns = { board: document.getElementById('view-board'), dash: document.getElementById('view-dashboard'), cal: document.getElementById('view-calendar') };
-
-        // Reset Styles
-        Object.values(btns).forEach(b => b.classList.replace('text-blue-400', 'text-slate-400'));
-        Object.values(btns).forEach(b => b.classList.replace('bg-slate-800', 'hover:bg-slate-700'));
-
-        // Hide All
-        board.classList.add('hidden');
-        dash.classList.add('translate-x-full');
-        cal.classList.add('translate-x-full');
-        mobTabs.classList.add('hidden');
-
-        // Show Active
-        if (view === 'board') {
-            board.classList.remove('hidden');
-            mobTabs.classList.remove('hidden');
-            btns.board.classList.add('text-blue-400', 'bg-slate-800');
-            renderBoard();
-            renderMobileTabs();
-        } else if (view === 'dashboard') {
-            dash.classList.remove('translate-x-full');
-            btns.dash.classList.add('text-blue-400', 'bg-slate-800');
-            renderDashboard();
-        } else {
-            cal.classList.remove('translate-x-full');
-            btns.cal.classList.add('text-blue-400', 'bg-slate-800');
-            renderCalendar();
-        }
+// --- FUNÇÕES EXPOSTAS AO HTML ---
+function setupGlobalFunctions() {
+    window.openSettings = () => {
+        const modal = document.getElementById('modal-settings');
+        const list = document.getElementById('settings-list');
+        if(!modal || !list) return;
+        list.innerHTML = '';
+        currentStages.forEach((stage, idx) => {
+            const item = document.createElement('div');
+            item.className = 'flex items-center justify-between bg-slate-700 p-3 rounded mb-2 border border-slate-600';
+            item.innerHTML = `
+                <span class="text-sm font-bold text-white">${stage.label}</span>
+                <div class="flex gap-1">
+                    <button onclick="moveOrder(${idx}, -1)" class="p-1 hover:bg-slate-600 rounded opacity-70 hover:opacity-100"><i data-lucide="arrow-up" class="w-4 h-4"></i></button>
+                    <button onclick="moveOrder(${idx}, 1)" class="p-1 hover:bg-slate-600 rounded opacity-70 hover:opacity-100"><i data-lucide="arrow-down" class="w-4 h-4"></i></button>
+                </div>
+            `;
+            list.appendChild(item);
+        });
+        modal.classList.remove('hidden');
+        if(window.lucide) window.lucide.createIcons();
     };
 
-    document.getElementById('view-board').onclick = () => setView('board');
-    document.getElementById('view-dashboard').onclick = () => setView('dashboard');
-    document.getElementById('view-calendar').onclick = () => setView('calendar');
-    
-    document.getElementById('cal-prev').onclick = () => { currentMonth.setMonth(currentMonth.getMonth()-1); renderCalendar(); };
-    document.getElementById('cal-next').onclick = () => { currentMonth.setMonth(currentMonth.getMonth()+1); renderCalendar(); };
+    window.moveOrder = (idx, dir) => {
+        if ((idx === 0 && dir === -1) || (idx === currentStages.length-1 && dir === 1)) return;
+        const temp = currentStages[idx];
+        currentStages[idx] = currentStages[idx + dir];
+        currentStages[idx + dir] = temp;
+        window.openSettings(); 
+    };
+
+    window.closeSettings = () => {
+        localStorage.setItem('retifica_stages_order_v7', JSON.stringify(currentStages));
+        document.getElementById('modal-settings').classList.add('hidden');
+        renderApp();
+        showToast("Ordem salva!");
+    };
+
+    window.resetSettings = () => {
+        localStorage.removeItem('retifica_stages_order_v7');
+        currentStages = DEFAULT_STAGES;
+        window.openSettings();
+    };
+
+    window.openModal = () => {
+        editingId = null;
+        resetForm();
+        document.getElementById('modal').classList.remove('hidden');
+    };
+
+    window.closeModal = () => {
+        document.getElementById('modal').classList.add('hidden');
+        resetForm();
+    };
+
+    window.approveOS = async (id) => {
+        if(!confirm("Aprovar orçamento? Isso distribuirá as peças.")) return;
+        try {
+            await updateDoc(doc(db, COLLECTION_NAME, id), { approved: true });
+            showToast("✅ Aprovado!");
+        } catch(e) { console.error(e); }
+    };
+
+    window.editOS = (id) => {
+        const os = workOrders.find(o => o.id === id);
+        if(!os) return;
+
+        editingId = id;
+        document.getElementById('input-os-num').value = os.osNumber;
+        document.getElementById('input-motor').value = os.motor;
+        document.getElementById('input-cliente').value = os.cliente;
+        document.getElementById('input-prazo').value = os.deadline || '';
+        document.getElementById('input-prioridade').checked = os.priority;
+
+        const partsContainer = document.getElementById('parts-selection');
+        partsContainer.innerHTML = '';
+        renderServiceChecklist(os, partsContainer); // REUSA A MESMA LÓGICA DE CRIAÇÃO
+
+        const btn = document.getElementById('btn-submit');
+        btn.innerHTML = `Salvar Alterações`;
+        
+        // Remove botão antigo e cria novo para evitar duplicação de event listener
+        const oldDel = document.getElementById('btn-delete-os');
+        if(oldDel) oldDel.remove();
+
+        const delBtn = document.createElement('button');
+        delBtn.id = 'btn-delete-os';
+        delBtn.className = 'w-full mt-3 bg-red-600/10 hover:bg-red-600 text-red-400 hover:text-white font-bold py-3 rounded-xl border border-red-900/50 transition-colors flex items-center justify-center gap-2 text-sm';
+        delBtn.innerHTML = `<i data-lucide="trash-2" class="w-4 h-4"></i> Excluir O.S.`;
+        delBtn.type = 'button';
+        delBtn.onclick = () => deleteOS(id);
+        
+        // Insere o botão de excluir após o form, mas dentro do modal footer se possível, ou no final do form
+        // Aqui insere no final do container de peças
+        partsContainer.parentElement.appendChild(delBtn);
+
+        document.getElementById('modal').classList.remove('hidden');
+        if(window.lucide) window.lucide.createIcons();
+    };
+
+    window.resolvePendency = async (osId, partName) => {
+        if(!confirm(`Liberar ${partName}?`)) return;
+        try {
+            const os = workOrders.find(o => o.id === osId);
+            const newPendencies = { ...os.pendencies };
+            delete newPendencies[partName];
+            await updateDoc(doc(db, COLLECTION_NAME, osId), { pendencies: newPendencies });
+            showToast("Pendência resolvida!");
+        } catch(e) { console.error(e); }
+    };
 }
 
-// --- AÇÕES DB e UTILS (Mantidos iguais ao anterior para economizar espaço, lógica já validada) ---
-// (Incluir aqui: handleOSSubmit, advanceGroup, deleteOS, movePart, finishPart, getDeadlineStatus, showToast, renderCalendar, resetForm)
-// ... [Repetir funções DB e Utils da versão anterior, garantindo que usem COLLECTION_NAME correto]
+function resetForm() {
+    document.getElementById('new-os-form').reset();
+    const partsContainer = document.getElementById('parts-selection');
+    partsContainer.innerHTML = ''; 
+    
+    // --- AQUI ESTAVA O ERRO: ANTES EU SÓ CRIAVA INPUTS VAZIOS. AGORA CHAMO A LÓGICA COMPLETA ---
+    renderServiceChecklist({}, partsContainer);
+
+    const btn = document.getElementById('btn-submit');
+    btn.innerHTML = `Lançar O.S.`;
+    
+    const delBtn = document.getElementById('btn-delete-os');
+    if(delBtn) delBtn.remove();
+}
 
 async function handleOSSubmit(e) {
     e.preventDefault();
@@ -676,6 +605,7 @@ async function handleOSSubmit(e) {
     }
 }
 
+// --- UTILS ---
 window.advanceGroup = async (osId, currentStageId) => {
     try {
         const os = workOrders.find(o => o.id === osId);
