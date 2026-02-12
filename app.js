@@ -15,9 +15,9 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
-const COLLECTION_NAME = "servicos_retifica_v4"; // Nova versão por causa da estrutura de dados nova
+const COLLECTION_NAME = "servicos_retifica_v4"; 
 
-// --- CATÁLOGO DE SERVIÇOS (BASEADO NO SEU PDF) ---
+// --- CATÁLOGO DE SERVIÇOS ---
 const SERVICE_CATALOG = {
     "Cabeçote": [
         "Plaina de cabeçote",
@@ -199,30 +199,35 @@ function setupGlobalFunctions() {
         // --- GERAÇÃO DO CHECKLIST ---
         Object.keys(SERVICE_CATALOG).forEach(part => {
             const isChecked = os.components && os.components[part];
-            // Verifica se tem serviços salvos (array) ou string antiga
+            
+            // Verifica serviços
             const savedServices = (os.services && os.services[part]) 
                 ? (Array.isArray(os.services[part]) ? os.services[part] : [os.services[part]]) 
                 : [];
             
-            // Cria o Accordion (Detalhes)
+            // Verifica pendências (NOVO)
+            const pendencyReason = os.pendencies && os.pendencies[part] ? os.pendencies[part] : '';
+
+            // Cria o Accordion
             const details = document.createElement('details');
             details.className = `group rounded-lg border ${isChecked ? 'border-blue-500/50 bg-blue-900/5' : 'border-slate-700 bg-slate-900'} transition-all open:bg-slate-800 open:border-blue-500 mb-2`;
-            if (isChecked) details.open = true; // Abre se já tiver peça selecionada
+            if (isChecked) details.open = true;
 
-            // Cabeçalho do Accordion (Nome da Peça)
             const summary = document.createElement('summary');
             summary.className = "flex items-center gap-3 p-3 cursor-pointer list-none select-none";
             summary.innerHTML = `
                 <input type="checkbox" name="parts" value="${part}" class="w-5 h-5 accent-blue-500" ${isChecked ? 'checked' : ''} onclick="event.stopPropagation()">
                 <span class="text-sm font-bold ${isChecked ? 'text-blue-300' : 'text-slate-400'} flex-1">${part}</span>
+                ${pendencyReason ? '<i data-lucide="alert-triangle" class="w-4 h-4 text-red-500 animate-pulse"></i>' : ''}
                 <i data-lucide="chevron-down" class="w-4 h-4 text-slate-500 transition-transform group-open:rotate-180"></i>
             `;
             
-            // Corpo do Accordion (Lista de Serviços)
             const content = document.createElement('div');
-            content.className = "p-3 pt-0 border-t border-slate-700/50 space-y-2";
+            content.className = "p-3 pt-0 border-t border-slate-700/50 space-y-3";
             
-            // Gera Checkboxes dos Serviços
+            // Serviços
+            const servicesDiv = document.createElement('div');
+            servicesDiv.className = "space-y-2";
             SERVICE_CATALOG[part].forEach(service => {
                 const serviceChecked = savedServices.includes(service);
                 const label = document.createElement('label');
@@ -231,18 +236,31 @@ function setupGlobalFunctions() {
                     <input type="checkbox" name="service-${part}" value="${service}" class="w-4 h-4 rounded border-slate-600 bg-slate-800 accent-emerald-500" ${serviceChecked ? 'checked' : ''}>
                     <span class="text-xs text-slate-300">${service}</span>
                 `;
-                content.appendChild(label);
+                servicesDiv.appendChild(label);
             });
+            content.appendChild(servicesDiv);
 
-            // Input Extra para "Outros"
+            // Outros
             const customService = savedServices.find(s => !SERVICE_CATALOG[part].includes(s)) || "";
-            const extraInput = document.createElement('input');
-            extraInput.type = "text";
-            extraInput.name = `extra-${part}`;
-            extraInput.value = customService;
-            extraInput.className = "w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs text-white focus:border-blue-500 outline-none mt-2";
-            extraInput.placeholder = "Outro serviço (digite aqui)...";
-            content.appendChild(extraInput);
+            content.innerHTML += `
+                <input type="text" name="extra-${part}" value="${customService}" 
+                class="w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs text-white focus:border-blue-500 outline-none" 
+                placeholder="Outro serviço...">
+            `;
+
+            // ÁREA DE PENDÊNCIA (BLOQUEIO)
+            const pendencyDiv = document.createElement('div');
+            pendencyDiv.className = "mt-3 pt-3 border-t border-slate-700/50";
+            pendencyDiv.innerHTML = `
+                <label class="flex items-center gap-2 text-red-400 font-bold text-xs mb-2 cursor-pointer">
+                    <input type="checkbox" class="accent-red-500" onchange="this.nextElementSibling.nextElementSibling.classList.toggle('hidden')" ${pendencyReason ? 'checked' : ''}>
+                    <i data-lucide="lock" class="w-3 h-3"></i> 🛑 Bloquear por Falta de Peça?
+                </label>
+                <input type="text" name="pendency-${part}" value="${pendencyReason}" 
+                    class="${pendencyReason ? '' : 'hidden'} w-full bg-red-900/10 border border-red-900/50 rounded p-2 text-xs text-red-200 focus:border-red-500 outline-none placeholder-red-500/50"
+                    placeholder="O que está faltando? (Ex: Válvulas de escape)">
+            `;
+            content.appendChild(pendencyDiv);
 
             details.appendChild(summary);
             details.appendChild(content);
@@ -250,7 +268,7 @@ function setupGlobalFunctions() {
         });
 
         const btn = document.getElementById('btn-submit');
-        btn.innerHTML = `Salvar Checklist`;
+        btn.innerHTML = `Salvar Alterações`;
         
         let delBtn = document.getElementById('btn-delete-os');
         if(!delBtn) {
@@ -269,18 +287,27 @@ function setupGlobalFunctions() {
         document.getElementById('modal').classList.remove('hidden');
         if(window.lucide) window.lucide.createIcons();
     };
+
+    window.resolvePendency = async (osId, partName) => {
+        if(!confirm(`Peça chegou? Liberar ${partName} para produção?`)) return;
+        try {
+            const os = workOrders.find(o => o.id === osId);
+            const newPendencies = { ...os.pendencies };
+            delete newPendencies[partName];
+            await updateDoc(doc(db, COLLECTION_NAME, osId), { pendencies: newPendencies });
+            showToast("Pendência resolvida! Peça liberada.");
+        } catch(e) { console.error(e); }
+    };
 }
 
 function resetForm() {
     const form = document.getElementById('new-os-form');
     form.reset();
     
-    // Recria a estrutura vazia do checklist
     const partsContainer = document.getElementById('parts-selection');
     partsContainer.innerHTML = ''; 
     
     Object.keys(SERVICE_CATALOG).forEach(part => {
-        // Código duplicado simplificado para o reset (mostra fechado)
         const details = document.createElement('details');
         details.className = `group rounded-lg border border-slate-700 bg-slate-900 mb-2`;
         
@@ -293,7 +320,6 @@ function resetForm() {
         `;
         
         details.appendChild(summary);
-        // Não renderiza o conteúdo interno no reset para economizar DOM, será gerado ao clicar se precisasse (mas aqui deixamos simples)
         partsContainer.appendChild(details);
     });
 
@@ -419,24 +445,30 @@ function createGroupedCard(os, stageId) {
 
     el.className = `relative p-4 rounded-lg border-l-4 ${borderClass} bg-slate-800 transition-all active:scale-[0.99] group shadow-sm`;
     
-    // RENDERIZAÇÃO DOS SERVIÇOS (TAGS)
+    // RENDERIZAÇÃO DOS SERVIÇOS
     const servicesListHTML = partsHere.map(p => {
         const servs = os.services && os.services[p];
-        if (!servs || servs.length === 0) return '';
-        const servText = Array.isArray(servs) ? servs.join(', ') : servs;
+        const isPending = os.pendencies && os.pendencies[p];
+        if (!servs && !isPending) return '';
         
+        let servText = Array.isArray(servs) ? servs.join(', ') : servs || '';
+        if (servText.length > 50) servText = servText.substring(0, 50) + '...';
+
         return `
             <div class="mt-1 border-t border-slate-700/50 pt-1">
-                <span class="text-xs font-bold text-slate-300 block">${p}:</span>
+                <div class="flex justify-between items-center">
+                    <span class="text-xs font-bold ${isPending ? 'text-red-400' : 'text-slate-300'}">${p}:</span>
+                    ${isPending ? '<i data-lucide="lock" class="w-3 h-3 text-red-500"></i>' : ''}
+                </div>
+                ${isPending ? `<span class="text-[10px] text-red-400 font-bold block">FALTA: ${os.pendencies[p]}</span>` : ''}
                 <span class="text-[10px] text-slate-500 leading-tight block">${servText}</span>
             </div>
         `;
     }).join('');
 
-    // BOTÕES DE AÇÃO - CORRIGIDO
+    // BOTÕES DE AÇÃO
     let actionButtons = '';
     
-    // Se está no Orçamento e NÃO está aprovado -> Botão Aprovar
     if (stageId === 'orcamento' && !os.approved) {
         actionButtons = `
             <div class="flex gap-2 mt-4">
@@ -449,7 +481,6 @@ function createGroupedCard(os, stageId) {
             </div>
         `;
     } 
-    // Se está no Orçamento e JÁ está aprovado -> Botão Distribuir
     else if (stageId === 'orcamento' && os.approved) {
          actionButtons = `
             <div class="mt-3 p-2 bg-emerald-900/20 border border-emerald-900/50 rounded text-center mb-2">
@@ -460,7 +491,6 @@ function createGroupedCard(os, stageId) {
             </button>
         `;
     } 
-    // Se está na Lavação
     else {
         actionButtons = `
             <button onclick="advanceGroup('${os.id}', '${stageId}')" class="w-full mt-3 bg-blue-600 hover:bg-blue-500 text-white py-2 rounded font-bold text-xs shadow-lg shadow-blue-900/20 flex justify-center items-center gap-2">
@@ -483,7 +513,6 @@ function createGroupedCard(os, stageId) {
         <h4 class="text-white font-bold text-lg leading-tight mb-1">${os.motor}</h4>
         <p class="text-slate-400 text-xs uppercase font-semibold mb-2 tracking-wide">${os.cliente}</p>
 
-        <!-- Lista de Serviços Compacta -->
         ${servicesListHTML}
 
         ${actionButtons}
@@ -491,35 +520,54 @@ function createGroupedCard(os, stageId) {
     return el;
 }
 
-// --- CARD: PEÇA INDIVIDUAL (Produção) ---
+// --- CARD: PEÇA INDIVIDUAL (Produção com BLOQUEIO) ---
 function createPartCard(os, partName, currentStageId) {
     const el = document.createElement('div');
     const deadlineStatus = getDeadlineStatus(os.deadlineDate);
-    
-    // Pega serviços desta peça
     const servs = os.services && os.services[partName];
     const serviceNote = (Array.isArray(servs) ? servs.join(', ') : servs) || 'Serviço Padrão';
     
+    // VERIFICA PENDÊNCIA (BLOQUEIO)
+    const pendencyReason = os.pendencies && os.pendencies[partName];
+    const isLocked = !!pendencyReason;
+
     const stageIdx = currentStages.findIndex(s => s.id === currentStageId);
     const hasNext = stageIdx < currentStages.length - 1;
 
-    el.className = `part-card relative p-3 rounded-lg border-l-4 border-slate-700 bg-slate-800 transition-all active:scale-[0.99] group`;
+    // Estilo visual de bloqueio
+    const bgClass = isLocked ? 'bg-red-900/10 border-red-800' : 'bg-slate-800 border-slate-700';
+
+    el.className = `part-card relative p-3 rounded-lg border-l-4 ${bgClass} transition-all active:scale-[0.99] group`;
     
     el.innerHTML = `
         <div class="flex justify-between items-start mb-2">
             <span class="text-[10px] font-bold text-slate-500 hover:text-white cursor-pointer" onclick="editOS('${os.id}')">#${os.osNumber}</span>
-            <span class="part-badge" data-type="${partName}">${partName}</span>
+            <div class="flex items-center gap-2">
+                ${isLocked ? '<i data-lucide="lock" class="w-3 h-3 text-red-500"></i>' : ''}
+                <span class="part-badge" data-type="${partName}">${partName}</span>
+            </div>
         </div>
         
         <div class="mb-2">
             <h4 class="text-white font-bold text-sm leading-tight truncate">${os.motor}</h4>
-            <div class="text-blue-300 text-[10px] font-medium mt-1 bg-blue-900/10 p-1.5 rounded border border-blue-900/30 leading-snug">
-                ${serviceNote}
-            </div>
+            
+            ${isLocked ? `
+                <div class="text-red-300 text-[10px] font-bold mt-1 bg-red-900/30 p-1.5 rounded border border-red-500/30 flex items-start gap-1">
+                   <span>⚠️ FALTA: ${pendencyReason}</span>
+                </div>
+            ` : `
+                <div class="text-blue-300 text-[10px] font-medium mt-1 bg-blue-900/10 p-1.5 rounded border border-blue-900/30 leading-snug">
+                    ${serviceNote}
+                </div>
+            `}
         </div>
 
         <div class="flex items-center gap-2 mt-3">
-            ${hasNext ? `
+            ${isLocked ? `
+                <button class="btn-resolve w-full bg-orange-600 hover:bg-orange-500 text-white py-1.5 rounded text-xs font-bold transition-colors flex justify-center gap-1 shadow-lg shadow-orange-900/20">
+                    <i data-lucide="unlock" class="w-3 h-3"></i> Resolver Pendência
+                </button>
+            ` : (hasNext ? `
                 <button class="btn-move flex-1 bg-slate-700 hover:bg-blue-600 text-slate-300 hover:text-white py-1.5 rounded text-xs font-bold transition-colors flex justify-center gap-1">
                     Próx <i data-lucide="arrow-right" class="w-3 h-3"></i>
                 </button>
@@ -527,14 +575,19 @@ function createPartCard(os, partName, currentStageId) {
                 <button class="btn-finish flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-1.5 rounded text-xs font-bold flex justify-center gap-1">
                     Pronto <i data-lucide="check" class="w-3 h-3"></i>
                 </button>
-            `}
+            `)}
         </div>
     `;
 
-    if(hasNext) {
-        el.querySelector('.btn-move').onclick = (e) => { e.stopPropagation(); movePart(os, partName, currentStages[stageIdx + 1].id); };
+    // Event Listeners
+    if(isLocked) {
+        el.querySelector('.btn-resolve').onclick = (e) => { e.stopPropagation(); resolvePendency(os.id, partName); };
     } else {
-        el.querySelector('.btn-finish').onclick = (e) => { e.stopPropagation(); finishPart(os, partName); };
+        if(hasNext) {
+            el.querySelector('.btn-move').onclick = (e) => { e.stopPropagation(); movePart(os, partName, currentStages[stageIdx + 1].id); };
+        } else {
+            el.querySelector('.btn-finish').onclick = (e) => { e.stopPropagation(); finishPart(os, partName); };
+        }
     }
 
     return el;
@@ -560,6 +613,7 @@ async function handleOSSubmit(e) {
 
         const componentsMap = {};
         const servicesMap = {};
+        const pendenciesMap = {}; // NOVO: Mapa de pendências
         
         // Recupera dados antigos se estiver editando
         let currentComponents = {};
@@ -568,48 +622,43 @@ async function handleOSSubmit(e) {
             currentComponents = oldOS.components || {};
         }
 
-        // Itera sobre as peças do Accordion
         Object.keys(SERVICE_CATALOG).forEach(part => {
-            // Verifica se a peça principal (checkbox do summary) está marcada
             const partCheckbox = document.querySelector(`input[name="parts"][value="${part}"]`);
             
             if (partCheckbox && partCheckbox.checked) {
-                // Mantém o estágio atual ou define como Lavação (Estágio 0)
                 componentsMap[part] = currentComponents[part] || currentStages[0].id;
                 
-                // Coleta serviços marcados (checkboxes internos)
                 const selectedServices = [];
                 const serviceChecks = document.querySelectorAll(`input[name="service-${part}"]:checked`);
                 serviceChecks.forEach(sc => selectedServices.push(sc.value));
                 
-                // Coleta "Outros"
                 const extraInput = document.querySelector(`input[name="extra-${part}"]`);
-                if(extraInput && extraInput.value.trim()) {
-                    selectedServices.push(extraInput.value.trim());
-                }
+                if(extraInput && extraInput.value.trim()) selectedServices.push(extraInput.value.trim());
 
-                if(selectedServices.length > 0) {
-                    servicesMap[part] = selectedServices;
+                if(selectedServices.length > 0) servicesMap[part] = selectedServices;
+
+                // Captura Pendência
+                const pendencyInput = document.querySelector(`input[name="pendency-${part}"]`);
+                if(pendencyInput && !pendencyInput.classList.contains('hidden') && pendencyInput.value.trim()) {
+                    pendenciesMap[part] = pendencyInput.value.trim();
                 }
             }
         });
 
         if (Object.keys(componentsMap).length === 0) throw new Error("Selecione pelo menos uma peça!");
 
+        const payload = {
+            ...osData,
+            components: componentsMap,
+            services: servicesMap,
+            pendencies: pendenciesMap // Salva pendências
+        };
+
         if (editingId) {
-            await updateDoc(doc(db, COLLECTION_NAME, editingId), {
-                ...osData,
-                components: componentsMap,
-                services: servicesMap
-            });
+            await updateDoc(doc(db, COLLECTION_NAME, editingId), payload);
             showToast("Atualizado!");
         } else {
-            await addDoc(collection(db, COLLECTION_NAME), {
-                ...osData,
-                components: componentsMap,
-                services: servicesMap,
-                approved: false
-            });
+            await addDoc(collection(db, COLLECTION_NAME), { ...payload, approved: false });
             showToast("O.S. Criada!");
         }
         window.closeModal();
@@ -650,6 +699,12 @@ async function deleteOS(id) {
 }
 
 async function movePart(os, partName, nextStageId) {
+    // BLOQUEIO DE SEGURANÇA
+    if (os.pendencies && os.pendencies[partName]) {
+        alert(`❌ AÇÃO BLOQUEADA!\n\nPeça: ${partName}\nMotivo: ${os.pendencies[partName]}\n\nResolva a pendência antes de avançar.`);
+        return;
+    }
+
     try {
         const osRef = doc(db, COLLECTION_NAME, os.id);
         const newComponents = { ...os.components };
@@ -659,6 +714,10 @@ async function movePart(os, partName, nextStageId) {
 }
 
 async function finishPart(os, partName) {
+    if (os.pendencies && os.pendencies[partName]) {
+        alert("❌ Resolva a pendência antes de finalizar!");
+        return;
+    }
     if(!confirm(`Finalizar ${partName}?`)) return;
     try {
         const osRef = doc(db, COLLECTION_NAME, os.id);
