@@ -2,169 +2,494 @@
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Retífica Pro</title>
-    
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Retífica Flow Master</title>
+    <!-- Usando Tailwind CSS para estrutura rápida e visual moderno -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Ícones -->
     <script src="https://unpkg.com/lucide@latest"></script>
-    <link rel="stylesheet" href="style.css">
-    <!-- Chart.js para gráficos simples no futuro, se quiser -->
-</head>
-<body class="bg-slate-950 text-slate-200 overflow-hidden selection:bg-blue-500 selection:text-white">
-
-    <!-- Header Principal -->
-    <header class="h-14 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-4 z-50 shrink-0">
-        <div class="flex items-center gap-2">
-            <div class="bg-blue-600 p-1.5 rounded-lg">
-                <i data-lucide="wrench" class="text-white w-4 h-4"></i>
-            </div>
-            <h1 class="font-bold text-lg tracking-tight text-white hidden md:block">Retífica<span class="text-blue-500">PRO</span></h1>
-        </div>
-
-        <div class="flex gap-2 bg-slate-800/50 p-1 rounded-lg border border-slate-700/50">
-            <!-- Botões de Visualização -->
-            <button id="view-board" class="p-2 rounded-md transition-colors hover:bg-slate-700 text-blue-400 bg-slate-800 shadow-sm" title="Quadro Kanban">
-                <i data-lucide="kanban" class="w-5 h-5"></i>
-            </button>
-            <button id="view-dashboard" class="p-2 rounded-md transition-colors hover:bg-slate-700 text-slate-400" title="Dashboard Geral">
-                <i data-lucide="layout-dashboard" class="w-5 h-5"></i>
-            </button>
-            <button id="view-calendar" class="p-2 rounded-md transition-colors hover:bg-slate-700 text-slate-400" title="Calendário">
-                <i data-lucide="calendar" class="w-5 h-5"></i>
-            </button>
-        </div>
+    <style>
+        /* --- ESTILOS PERSONALIZADOS E ANIMAÇÕES --- */
         
-        <button onclick="openSettings()" class="p-2 text-slate-400 hover:text-white transition-colors"><i data-lucide="settings" class="w-5 h-5"></i></button>
+        :root {
+            --neon-blue: #3b82f6;
+            --neon-red: #ef4444;
+            --neon-green: #22c55e;
+            --dark-bg: #0f172a;
+            --card-bg: #1e293b;
+        }
+
+        body {
+            background-color: var(--dark-bg);
+            color: #e2e8f0;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            overflow-x: hidden; /* Evita scroll lateral indesejado */
+        }
+
+        /* Scrollbar personalizada */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0f172a; 
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #334155; 
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #475569; 
+        }
+
+        /* --- ANIMAÇÕES --- */
+
+        /* Entrada suave dos cards */
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(20px) scale(0.95);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
+        }
+
+        .card-enter {
+            animation: slideIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+        }
+
+        /* Efeito ao completar/mover */
+        @keyframes zipOut {
+            0% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.1); opacity: 0.8; }
+            100% { transform: translateX(100px) scale(0); opacity: 0; }
+        }
+
+        .card-exit {
+            animation: zipOut 0.3s ease-in forwards;
+        }
+
+        /* Efeito de erro/bloqueio (Shake) */
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            10%, 30%, 50%, 70%, 90% { transform: translateX(-4px); }
+            20%, 40%, 60%, 80% { transform: translateX(4px); }
+        }
+
+        .shake-animation {
+            animation: shake 0.4s cubic-bezier(.36,.07,.19,.97) both;
+            border-color: var(--neon-red) !important;
+        }
+
+        /* Pulse para urgência */
+        @keyframes pulse-red {
+            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+            70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+
+        .urgent-pulse {
+            animation: pulse-red 2s infinite;
+            border-left: 4px solid var(--neon-red);
+        }
+
+        /* Transições de hover */
+        .service-card {
+            transition: all 0.2s ease;
+        }
+        
+        .service-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+            border-color: #64748b;
+        }
+
+        /* Botões */
+        .btn-action {
+            transition: transform 0.1s;
+        }
+        .btn-action:active {
+            transform: scale(0.90);
+        }
+
+        /* Colunas */
+        .stage-column {
+            min-width: 280px;
+            max-width: 320px;
+            transition: background-color 0.3s;
+        }
+
+        /* Pendência Overlay */
+        .blocked-overlay {
+            background: repeating-linear-gradient(
+                45deg,
+                rgba(239, 68, 68, 0.1),
+                rgba(239, 68, 68, 0.1) 10px,
+                rgba(239, 68, 68, 0.2) 10px,
+                rgba(239, 68, 68, 0.2) 20px
+            );
+        }
+
+    </style>
+</head>
+<body class="h-screen flex flex-col">
+
+    <!-- Header -->
+    <header class="bg-slate-900 border-b border-slate-700 p-4 flex justify-between items-center shadow-lg z-10">
+        <div class="flex items-center gap-3">
+            <i data-lucide="settings" class="text-blue-500 w-8 h-8 animate-spin-slow"></i>
+            <div>
+                <h1 class="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-emerald-400">RETÍFICA MANAGER</h1>
+                <p class="text-xs text-slate-400">Sistema de Fluxo Contínuo</p>
+            </div>
+        </div>
+        <button onclick="openModal()" class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-full font-bold shadow-lg transition-all hover:scale-105 flex items-center gap-2">
+            <i data-lucide="plus-circle" class="w-5 h-5"></i> Nova O.S.
+        </button>
     </header>
 
-    <!-- Navegação Mobile (Abas de Estágios) - Só aparece no modo Board -->
-    <nav class="md:hidden h-12 bg-slate-900 border-b border-slate-800 flex items-center overflow-x-auto no-scrollbar px-2 gap-2 z-40 transition-all" id="mobile-tabs">
-        <!-- Injetado via JS -->
-    </nav>
-
-    <!-- Área Principal -->
-    <main class="relative flex-1 overflow-hidden h-[calc(100vh-6.5rem)] md:h-[calc(100vh-3.5rem)] bg-slate-950">
-        
-        <!-- Botão Flutuante (FAB) Mobile -->
-        <button id="fab-new-os" class="md:hidden fixed bottom-6 right-6 w-14 h-14 bg-blue-600 rounded-full shadow-xl shadow-blue-900/40 flex items-center justify-center z-50 text-white active:scale-90 transition-transform hover:scale-105">
-            <i data-lucide="plus" class="w-7 h-7"></i>
-        </button>
-
-        <!-- KANBAN BOARD VIEW -->
-        <div id="board-view" class="absolute inset-0 p-4 overflow-x-hidden md:overflow-x-auto overflow-y-hidden md:flex md:gap-4 md:p-6 snap-x snap-mandatory transition-opacity duration-300">
-             <div class="flex flex-col items-center justify-center h-full w-full text-slate-500">
-                <i data-lucide="loader-2" class="animate-spin w-8 h-8 mb-2"></i>
-                <p>Carregando oficina...</p>
-             </div>
+    <!-- Main Board -->
+    <main class="flex-1 overflow-x-auto overflow-y-hidden p-6">
+        <div class="flex gap-4 h-full" id="board-container">
+            <!-- As colunas serão geradas via JS -->
         </div>
-
-        <!-- DASHBOARD VIEW -->
-        <div id="dashboard-view" class="absolute inset-0 overflow-y-auto bg-slate-950 translate-x-full transition-transform duration-300 p-4 pb-20 custom-scrollbar">
-            <!-- Conteúdo injetado via JS -->
-        </div>
-
-        <!-- CALENDAR VIEW -->
-        <div id="calendar-view" class="absolute inset-0 bg-slate-950 translate-x-full transition-transform duration-300 z-40 flex flex-col">
-            <div class="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-900">
-                <h2 class="text-xl font-bold text-white" id="calendar-month-title">Janeiro</h2>
-                <div class="flex gap-2">
-                    <button id="cal-prev" class="p-2 hover:bg-slate-800 rounded"><i data-lucide="chevron-left"></i></button>
-                    <button id="cal-next" class="p-2 hover:bg-slate-800 rounded"><i data-lucide="chevron-right"></i></button>
-                </div>
-            </div>
-            <div class="flex-1 overflow-y-auto p-2">
-                 <div id="calendar-grid" class="grid grid-cols-7 gap-1 auto-rows-min"></div>
-            </div>
-        </div>
-
     </main>
 
-    <!-- Modal Nova OS / Edit OS -->
-    <div id="modal" class="fixed inset-0 bg-black/90 backdrop-blur-sm z-[60] hidden flex justify-center items-end md:items-center">
-        <div class="bg-slate-900 w-full md:w-[650px] md:rounded-2xl rounded-t-2xl border-t md:border border-slate-700 shadow-2xl flex flex-col max-h-[95vh] animate-slide-up">
+    <!-- Modal Nova OS -->
+    <div id="modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm hidden items-center justify-center z-50 opacity-0 transition-opacity duration-300">
+        <div class="bg-slate-800 p-6 rounded-xl w-full max-w-md border border-slate-600 shadow-2xl transform scale-90 transition-transform duration-300" id="modal-content">
+            <h2 class="text-xl font-bold mb-4 text-white flex items-center gap-2">
+                <i data-lucide="file-plus" class="text-emerald-400"></i> Entrada de Serviço
+            </h2>
             
-            <div class="p-4 border-b border-slate-800 flex justify-between items-center sticky top-0 bg-slate-900 z-20 rounded-t-2xl">
-                <h3 class="font-bold text-white text-lg flex items-center gap-2">
-                    <i data-lucide="file-text" class="text-blue-500 w-5 h-5"></i> Ficha de Serviço
-                </h3>
-                <button onclick="closeModal()" class="text-slate-400 hover:text-white p-2 hover:bg-slate-800 rounded-full"><i data-lucide="x" class="w-5 h-5"></i></button>
-            </div>
-
-            <form id="new-os-form" class="p-0 overflow-y-auto custom-scrollbar flex-1">
-                <!-- Cabeçalho Compacto -->
-                <div class="p-4 grid grid-cols-12 gap-3 bg-slate-900/50 border-b border-slate-800 sticky top-0 z-10 backdrop-blur-md">
-                    <div class="col-span-3">
-                        <label class="block text-[10px] font-bold text-slate-500 uppercase">Nº OS</label>
-                        <input type="text" id="input-os-num" class="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white font-mono text-sm focus:border-blue-500 outline-none" placeholder="000">
-                    </div>
-                    <div class="col-span-9">
-                        <label class="block text-[10px] font-bold text-slate-500 uppercase">Motor / Veículo</label>
-                        <input type="text" id="input-motor" required class="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white font-bold text-sm focus:border-blue-500 outline-none" placeholder="Ex: MWM 229">
-                    </div>
-                    <div class="col-span-12 md:col-span-8">
-                        <label class="block text-[10px] font-bold text-slate-500 uppercase">Cliente</label>
-                        <input type="text" id="input-cliente" required class="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white text-sm focus:border-blue-500 outline-none" placeholder="Nome do Cliente">
-                    </div>
-                    <div class="col-span-6 md:col-span-4">
-                        <label class="block text-[10px] font-bold text-slate-500 uppercase">Prazo</label>
-                        <input type="datetime-local" id="input-prazo" class="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white text-sm focus:border-blue-500 outline-none">
-                    </div>
-                    <div class="col-span-6 md:col-span-12 flex items-center pt-2">
-                        <label class="flex items-center gap-2 cursor-pointer select-none">
-                            <input type="checkbox" id="input-prioridade" class="w-4 h-4 accent-red-500 rounded">
-                            <span class="text-xs font-bold text-red-400">🔥 URGENTE</span>
-                        </label>
-                    </div>
+            <form id="new-os-form" class="space-y-4">
+                <div>
+                    <label class="block text-sm text-slate-400 mb-1">Cliente</label>
+                    <input type="text" id="input-cliente" required class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white focus:border-blue-500 outline-none transition-colors" placeholder="Ex: Mecânica do Jão">
+                </div>
+                <div>
+                    <label class="block text-sm text-slate-400 mb-1">Veículo/Motor</label>
+                    <input type="text" id="input-motor" required class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white focus:border-blue-500 outline-none" placeholder="Ex: GM VHC 1.0">
+                </div>
+                <div>
+                    <label class="block text-sm text-slate-400 mb-1">Tipo de Serviço</label>
+                    <select id="input-tipo" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white focus:border-blue-500 outline-none">
+                        <option value="Completo">Motor Completo</option>
+                        <option value="Cabecote">Só Cabeçote</option>
+                        <option value="Bloco">Só Bloco</option>
+                    </select>
+                </div>
+                <div class="flex items-center gap-2">
+                    <input type="checkbox" id="input-prioridade" class="w-5 h-5 accent-red-500 rounded cursor-pointer">
+                    <label for="input-prioridade" class="text-red-400 font-bold cursor-pointer">URGENTE / GARANTIA</label>
                 </div>
 
-                <!-- Lista de Peças Otimizada -->
-                <div class="p-4 space-y-4">
-                    <h4 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-2">
-                        <i data-lucide="layers" class="w-3 h-3"></i> Seleção de Serviços
-                    </h4>
-                    <div id="parts-selection" class="space-y-3">
-                        <!-- Gerado via JS -->
-                    </div>
+                <div class="flex justify-end gap-3 mt-6">
+                    <button type="button" onclick="closeModal()" class="px-4 py-2 text-slate-400 hover:text-white transition-colors">Cancelar</button>
+                    <button type="submit" class="bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-2 rounded-lg font-bold shadow-lg hover:shadow-emerald-500/20 transition-all">Lançar</button>
                 </div>
-                
-                <!-- Espaço extra no final para o botão não cobrir -->
-                <div class="h-20"></div>
             </form>
-
-            <!-- Footer com Ações -->
-            <div class="p-4 border-t border-slate-800 bg-slate-900 absolute bottom-0 w-full rounded-b-2xl flex flex-col gap-2 z-20 shadow-[-1px_-5px_20px_rgba(0,0,0,0.5)]">
-                <button type="submit" form="new-os-form" id="btn-submit" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3.5 rounded-xl shadow-lg shadow-blue-900/20 active:scale-[0.98] transition-transform flex items-center justify-center gap-2 text-sm">
-                    Salvar O.S.
-                </button>
-            </div>
         </div>
     </div>
 
-    <!-- Modal Settings -->
-    <div id="modal-settings" class="fixed inset-0 bg-black/90 backdrop-blur-sm z-[70] hidden flex items-center justify-center p-4">
-        <div class="bg-slate-800 w-full max-w-sm rounded-xl border border-slate-600 shadow-2xl p-5">
-            <h3 class="text-white font-bold text-lg mb-4">Configurar Fluxo</h3>
-            <div id="settings-list" class="space-y-2 mb-6 max-h-[60vh] overflow-y-auto"></div>
-            <div class="flex justify-end gap-3">
-                <button onclick="resetSettings()" class="text-xs text-red-400 hover:text-white px-2">Resetar Padrão</button>
-                <button onclick="closeSettings()" class="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2 rounded-lg font-bold text-sm">Salvar</button>
-            </div>
-        </div>
+    <!-- Notification Toast -->
+    <div id="toast" class="fixed bottom-5 right-5 bg-slate-800 text-white px-4 py-3 rounded-lg shadow-xl border-l-4 border-emerald-500 transform translate-y-20 opacity-0 transition-all duration-300 flex items-center gap-3 z-50">
+        <i data-lucide="check-circle" class="text-emerald-500"></i>
+        <span id="toast-msg">Operação realizada</span>
     </div>
 
-    <!-- Toast Notification -->
-    <div id="toast" class="fixed top-6 left-1/2 -translate-x-1/2 bg-slate-800 text-white px-6 py-3 rounded-full shadow-2xl border border-slate-600 flex items-center gap-3 z-[80] translate-y-[-150%] transition-transform duration-300">
-        <i data-lucide="check-circle" class="text-emerald-400"></i>
-        <span id="toast-msg" class="font-medium text-sm"></span>
-    </div>
+    <script>
+        // --- CONFIGURAÇÃO E DADOS ---
 
-    <!-- Botão Desktop Nova OS -->
-    <div class="hidden md:block fixed bottom-8 right-8 z-40">
-        <button onclick="openModal()" class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-full font-bold shadow-lg flex items-center gap-2 transition-all hover:scale-105">
-            <i data-lucide="plus"></i> Nova O.S.
-        </button>
-    </div>
+        // As seções que você pediu, na ordem lógica
+        const STAGES = [
+            { id: 'desmontagem', label: 'Desmontagem', color: 'border-slate-500' },
+            { id: 'lavacao', label: 'Lavação', color: 'border-blue-500' },
+            { id: 'metrologia', label: 'Metrologia', color: 'border-yellow-500' },
+            { id: 'cilindro', label: 'Cilindro', color: 'border-orange-500' }, // Seções paralelas simplificadas na visualização
+            { id: 'cabecote', label: 'Cabeçote', color: 'border-purple-500' },
+            { id: 'montagem', label: 'Montagem', color: 'border-emerald-500' }
+        ];
 
-    <script type="module" src="app.js"></script>
+        // Estado Inicial (Simulado)
+        let workOrders = [
+            { id: 1, cliente: 'Auto Center X', motor: 'VW AP 1.8', tipo: 'Completo', stage: 'lavacao', priority: false, pending: false, pendingReason: '' },
+            { id: 2, cliente: 'Sr. Carlos', motor: 'Fiat Fire 1.0', tipo: 'Cabecote', stage: 'metrologia', priority: true, pending: true, pendingReason: 'Aguardando Guias' },
+            { id: 3, cliente: 'Transportadora A', motor: 'MB OM352', tipo: 'Completo', stage: 'desmontagem', priority: false, pending: false, pendingReason: '' },
+        ];
+
+        // --- RENDERIZAÇÃO ---
+
+        function init() {
+            lucide.createIcons();
+            renderBoard();
+        }
+
+        function renderBoard() {
+            const container = document.getElementById('board-container');
+            container.innerHTML = '';
+
+            STAGES.forEach(stage => {
+                // Cria coluna
+                const column = document.createElement('div');
+                column.className = `stage-column flex flex-col h-full bg-slate-800/50 rounded-xl border border-slate-700 backdrop-blur-sm`;
+                
+                // Header da coluna
+                column.innerHTML = `
+                    <div class="p-3 border-b border-slate-700 flex justify-between items-center bg-slate-800 rounded-t-xl sticky top-0 z-10">
+                        <div class="flex items-center gap-2">
+                            <div class="w-3 h-3 rounded-full ${getStageColor(stage.id)}"></div>
+                            <h3 class="font-bold text-slate-200 uppercase tracking-wider text-sm">${stage.label}</h3>
+                        </div>
+                        <span class="bg-slate-700 text-xs px-2 py-1 rounded-full text-slate-300 font-mono">
+                            ${workOrders.filter(o => o.stage === stage.id).length}
+                        </span>
+                    </div>
+                    <div class="flex-1 p-2 overflow-y-auto space-y-3" id="col-${stage.id}">
+                        <!-- Cards entram aqui -->
+                    </div>
+                `;
+
+                container.appendChild(column);
+
+                // Popula cards
+                const list = column.querySelector(`#col-${stage.id}`);
+                const ordersInStage = workOrders.filter(o => o.stage === stage.id);
+                
+                ordersInStage.forEach(os => {
+                    const card = createCardElement(os);
+                    list.appendChild(card);
+                });
+            });
+
+            lucide.createIcons();
+        }
+
+        function getStageColor(stageId) {
+            const map = {
+                'desmontagem': 'bg-slate-400',
+                'lavacao': 'bg-blue-400',
+                'metrologia': 'bg-yellow-400',
+                'cilindro': 'bg-orange-400',
+                'cabecote': 'bg-purple-400',
+                'montagem': 'bg-emerald-400'
+            };
+            return map[stageId] || 'bg-slate-500';
+        }
+
+        function createCardElement(os) {
+            const el = document.createElement('div');
+            // Classes base
+            el.className = `service-card card-enter bg-slate-700 p-3 rounded-lg border-l-4 shadow-lg relative group select-none ${os.priority ? 'urgent-pulse border-red-500' : 'border-slate-500'} ${os.pending ? 'border-yellow-500 blocked-overlay' : ''}`;
+            el.id = `card-${os.id}`;
+
+            const nextStageIdx = STAGES.findIndex(s => s.id === os.stage) + 1;
+            const hasNext = nextStageIdx < STAGES.length;
+
+            el.innerHTML = `
+                <div class="flex justify-between items-start mb-1">
+                    <span class="text-xs font-mono text-slate-400">#${os.id.toString().padStart(4, '0')}</span>
+                    ${os.priority ? '<span class="text-[10px] font-bold bg-red-500/20 text-red-400 px-1 rounded uppercase">Urgente</span>' : ''}
+                </div>
+                <h4 class="font-bold text-slate-100 leading-tight mb-1">${os.motor}</h4>
+                <p class="text-xs text-slate-300 mb-2 truncate">${os.cliente}</p>
+                
+                ${os.pending ? `
+                    <div class="bg-yellow-500/10 border border-yellow-500/30 text-yellow-200 text-xs p-1 rounded mb-2 flex items-center gap-1">
+                        <i data-lucide="alert-triangle" class="w-3 h-3"></i> ${os.pendingReason || 'Pendente'}
+                    </div>
+                ` : ''}
+
+                <div class="flex justify-between items-center mt-3 pt-2 border-t border-slate-600/50">
+                    <button onclick="togglePending(${os.id})" class="btn-action p-1.5 rounded hover:bg-slate-600 text-slate-400 hover:text-yellow-400 transition-colors" title="Travar/Destravar">
+                        <i data-lucide="${os.pending ? 'lock' : 'unlock'}" class="w-4 h-4"></i>
+                    </button>
+                    
+                    ${hasNext ? `
+                        <button onclick="advanceStage(${os.id})" class="btn-action flex items-center gap-1 bg-blue-600/20 hover:bg-blue-600 text-blue-400 hover:text-white px-2 py-1 rounded text-xs font-bold transition-all">
+                            Próximo <i data-lucide="chevron-right" class="w-3 h-3"></i>
+                        </button>
+                    ` : `
+                        <button onclick="finishOS(${os.id})" class="btn-action flex items-center gap-1 bg-emerald-600/20 hover:bg-emerald-600 text-emerald-400 hover:text-white px-2 py-1 rounded text-xs font-bold transition-all">
+                            Entregar <i data-lucide="check" class="w-3 h-3"></i>
+                        </button>
+                    `}
+                </div>
+            `;
+            return el;
+        }
+
+        // --- AÇÕES LÓGICAS ---
+
+        function advanceStage(id) {
+            const os = workOrders.find(o => o.id === id);
+            if (!os) return;
+
+            // Lógica de bloqueio por pendência
+            if (os.pending) {
+                const card = document.getElementById(`card-${id}`);
+                card.classList.remove('shake-animation'); // Reset para re-animar
+                void card.offsetWidth; // Trigger reflow
+                card.classList.add('shake-animation');
+                showToast(`OS #${id} está travada! Resolva a pendência.`, 'error');
+                return;
+            }
+
+            const currentIdx = STAGES.findIndex(s => s.id === os.stage);
+            if (currentIdx < STAGES.length - 1) {
+                // Animação de saída antes de mudar o dado
+                const card = document.getElementById(`card-${id}`);
+                card.classList.add('card-exit');
+
+                setTimeout(() => {
+                    os.stage = STAGES[currentIdx + 1].id;
+                    renderBoard();
+                    showToast(`OS #${id} movida para ${STAGES[currentIdx + 1].label}`);
+                }, 300); // Tempo da animação
+            }
+        }
+
+        function togglePending(id) {
+            const os = workOrders.find(o => o.id === id);
+            if (os.pending) {
+                os.pending = false;
+                os.pendingReason = '';
+                showToast(`OS #${id} liberada!`);
+            } else {
+                const reason = prompt("Qual o motivo da pendência? (Ex: Aguardando peça)");
+                if (reason) {
+                    os.pending = true;
+                    os.pendingReason = reason;
+                    showToast(`OS #${id} travada.`);
+                } else {
+                    return; // Cancelou
+                }
+            }
+            renderBoard();
+        }
+
+        function finishOS(id) {
+             if (!confirm("Confirmar entrega do serviço?")) return;
+             
+             const card = document.getElementById(`card-${id}`);
+             card.style.transform = "scale(1.05)";
+             card.style.borderColor = "#10b981"; // Emerald
+             
+             setTimeout(() => {
+                 card.classList.add('card-exit');
+                 setTimeout(() => {
+                     workOrders = workOrders.filter(o => o.id !== id);
+                     renderBoard();
+                     showToast("Serviço finalizado com sucesso!");
+                     confettiEffect(); // Bônus
+                 }, 300);
+             }, 200);
+        }
+
+        // --- MODAL ---
+
+        function openModal() {
+            const modal = document.getElementById('modal');
+            const content = document.getElementById('modal-content');
+            modal.classList.remove('hidden');
+            // Pequeno delay para permitir a transição CSS
+            setTimeout(() => {
+                modal.classList.remove('opacity-0');
+                content.classList.remove('scale-90');
+                content.classList.add('scale-100');
+            }, 10);
+            document.getElementById('input-cliente').focus();
+        }
+
+        function closeModal() {
+            const modal = document.getElementById('modal');
+            const content = document.getElementById('modal-content');
+            
+            modal.classList.add('opacity-0');
+            content.classList.remove('scale-100');
+            content.classList.add('scale-90');
+            
+            setTimeout(() => {
+                modal.classList.add('hidden');
+                document.getElementById('new-os-form').reset();
+            }, 300);
+        }
+
+        document.getElementById('new-os-form').addEventListener('submit', (e) => {
+            e.preventDefault();
+            
+            const newOS = {
+                id: Math.floor(Math.random() * 10000), // ID simples para demo
+                cliente: document.getElementById('input-cliente').value,
+                motor: document.getElementById('input-motor').value,
+                tipo: document.getElementById('input-tipo').value,
+                stage: 'desmontagem', // Sempre começa aqui
+                priority: document.getElementById('input-prioridade').checked,
+                pending: false,
+                pendingReason: ''
+            };
+
+            workOrders.push(newOS);
+            closeModal();
+            renderBoard();
+            showToast('Nova O.S. lançada na Desmontagem');
+            
+            // Scroll para a coluna de desmontagem
+            document.querySelector('.stage-column').scrollIntoView({ behavior: 'smooth' });
+        });
+
+        // --- UTILITÁRIOS ---
+
+        function showToast(msg, type = 'success') {
+            const toast = document.getElementById('toast');
+            const text = document.getElementById('toast-msg');
+            const icon = toast.querySelector('i');
+            
+            text.textContent = msg;
+            
+            if(type === 'error') {
+                toast.classList.replace('border-emerald-500', 'border-red-500');
+                icon.setAttribute('data-lucide', 'alert-circle');
+                icon.classList.replace('text-emerald-500', 'text-red-500');
+            } else {
+                toast.classList.replace('border-red-500', 'border-emerald-500');
+                icon.setAttribute('data-lucide', 'check-circle');
+                icon.classList.replace('text-red-500', 'text-emerald-500');
+            }
+            lucide.createIcons();
+
+            toast.classList.remove('translate-y-20', 'opacity-0');
+            
+            setTimeout(() => {
+                toast.classList.add('translate-y-20', 'opacity-0');
+            }, 3000);
+        }
+
+        function confettiEffect() {
+            // Um efeito visual simples sem biblioteca externa
+            const count = 50;
+            const defaults = { origin: { y: 0.7 } };
+            // (Para um efeito real de confete, precisaria de uma lib externa, 
+            // aqui vamos simular com um flash na tela)
+            const flash = document.createElement('div');
+            flash.className = 'fixed inset-0 bg-emerald-500/20 z-50 pointer-events-none transition-opacity duration-500';
+            document.body.appendChild(flash);
+            setTimeout(() => {
+                flash.classList.add('opacity-0');
+                setTimeout(() => flash.remove(), 500);
+            }, 100);
+        }
+
+        // Fecha modal ao clicar fora
+        document.getElementById('modal').addEventListener('click', (e) => {
+            if (e.target.id === 'modal') closeModal();
+        });
+
+        // Inicializa
+        init();
+
+    </script>
 </body>
 </html>
